@@ -1,6 +1,6 @@
 # RPMsg DMA Offload – Documentation
 
-Welcome to the project documentation for **RPMsg DMA Offload**. This project demonstrates RPMsg-based audio processing offloaded to a remote DSP on AM62Ax platforms using TI's `ti-rpmsg-char` and Linux DMA Heaps.
+Welcome to the project documentation for **RPMsg DMA Offload**. This project demonstrates RPMsg-based audio processing offloaded to a remote DSP on AM62Dx platforms using TI's `ti-rpmsg-char` and Linux DMA Heaps.
 
 ---
 
@@ -51,7 +51,7 @@ lib/, obj/                 - Build outputs (ignored by git)
 example/audio_offload/
     ├── src/                    - Example source
     ├── inc/                    - Example headers
-    ├── audio_sample/           - Audio sample file
+    ├── audio_sample/           - Audio sample file (48Khz Mono)
     ├── host utility/EQ_CTL.py  - Host side python utility to monitor and control EQ params
     └── config/dsp_offload.cfg  - Runtime config file
 Makefile                        - Top-level build file
