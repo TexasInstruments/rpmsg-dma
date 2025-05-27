@@ -1,6 +1,6 @@
 # RPMsg DMA Offload – Documentation
 
-Welcome to the project documentation for **RPMsg DMA Offload**. This project demonstrates RPMsg-based audio processing offloaded to a remote DSP on AM62Dx platforms using TI's `ti-rpmsg-char` and Linux DMA Heaps.
+Welcome to the project documentation for **RPMsg DMA Offload**. This project demonstrates RPMsg-based General purpose DSP offloading from Linux on AM62Dx platforms using TI's `ti-rpmsg-char` and Linux DMA Heaps.
 
 ---
 
