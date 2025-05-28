@@ -65,6 +65,7 @@ CMD_PORT = 8889
 RETRY_INTERVAL = 3  # seconds
 MAX_SAMPLES = 4096
 sock = None
+sock_cmd = None
 connected = False
 BAUD_RATE = 115200
 TIMEOUT = 1
@@ -81,7 +82,6 @@ cpu_loads = deque(maxlen=MAX_FRAMES)
 dsp_loads = deque(maxlen=MAX_FRAMES)
 
 
-eq_gains = {"BASS": 1.0, "MID": 1.0, "TREBLE": 1.0}
 current_mode = "BOTH"
 ser = None
 is_running = False
@@ -108,6 +108,38 @@ log_pattern = re.compile(
     r"Frame\s+(\d+):\s+AvgAmp=([\d.]+),\s+Latency=([\d.]+)ms,\s+Mode=([A-Z]+)\s+CPULoad=([\d.]+)%\s+DSPLoad=([\d.]+)%"
 )
 
+def wait_for_connection():
+    global connected, sock
+    while not connected:
+        log_debug("Waiting for device data connection...")
+        try:
+            if sock:
+                sock.close()
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.connect((SERVER_IP, SERVER_PORT))
+            connected = True
+            clear_data()
+            log_debug("Connected to device (data)")
+        except Exception as e:
+            log_debug(f"Retrying in {RETRY_INTERVAL}s... ({e})")
+            time.sleep(RETRY_INTERVAL)
+
+def wait_for_cmd():
+    global sock_cmd, connected_cmd
+    connected_cmd = False
+    while not connected_cmd:
+        try:
+            if sock_cmd:
+                sock_cmd.close()
+            sock_cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock_cmd.connect((SERVER_IP, CMD_PORT))
+            connected_cmd = True
+            log_debug("Connected to device (command)")
+        except Exception as e:
+            log_debug(f"Waiting for CMD port... retrying in {RETRY_INTERVAL}s ({e})")
+            time.sleep(RETRY_INTERVAL)
+
+"""
 def wait_for_cmd():
     global sock_cmd, connected_cmd
     sock_cmd = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -129,7 +161,7 @@ def wait_for_connection():
         except Exception as e:
             log_debug(f"Retrying in {RETRY_INTERVAL} seconds...")
             time.sleep(RETRY_INTERVAL)
-
+"""
 def amplitude_to_dbfs(amp, peak=32767.0):
     if amp <= 0:
         return -100.0
@@ -240,6 +272,13 @@ def clear_data():
     summary_label.config(text="Summary Info")
     if log_console:
         log_console.delete("1.0", tk.END)
+
+    global waveform_insamples, waveform_outsamples, fft_index
+    with waveform_lock:
+        waveform_insamples.clear()
+        waveform_outsamples.clear()
+    fft_index = 0
+    bass_slider.set(0)
     log_debug("[Cleared] Graph and logs reset")
 
 def send_command(cmd):
@@ -252,15 +291,11 @@ def send_command(cmd):
         if ser and ser.is_open:
             ser.write((cmd + '\n').encode())
 
-    #log_debug("Sent → " + cmd)
-
-def send_gain_command(gtype, val):
+def send_param_command(gtype, val):
     global connected
 
     if connected:
-        eq_gains[gtype.upper()] = val
         send_command(f"SET {gtype.upper()} {val}\n")
-        #print(f"SET {gtype.upper()} {val}")
         canvas.draw_idle()
 
 def set_mode(mode):
@@ -304,7 +339,6 @@ def update_live_summary(line):
             FRAME_SIZE = 256
             SAMPLE_RATE = 48000
         elif line.startswith("[Live Summary] Latency"):
-            # Example: "[Live Summary] Latency (ms): Min: 5.23, Max: 15.67, Avg: 8.90"
             m = re.search(r"Min:\s*([\d.]+),\s*Max:\s*([\d.]+),\s*Avg:\s*([\d.]+)", line)
             if m:
                 live_summary["latency_min"] = float(m.group(1))
@@ -344,25 +378,23 @@ def read_data():
 
     recv_buffer = ""
 
-    if MODE == "ip":
-        wait_for_connection()
-        wait_for_cmd()
-        log_debug("Connected via IP")
-    elif MODE == "uart" and ser is not None:
-        connected = True
-        log_debug("Connected via UART")
-
     while True:
+        if MODE == "ip":
+            if not connected:
+                wait_for_connection()
+                wait_for_cmd()
+                log_debug("Connected via IP")
         try:
             if MODE == "ip":
                 data = sock.recv(1024).decode()
+                if not data:
+                    raise ConnectionError("Connection lost")
             elif MODE == "uart":
-                data = ser.read(1024).decode()
+                if ser is not None:
+                    data = ser.read(1024).decode()
+                else:
+                    continue
 
-            if not data:
-                continue
-
-#            print(f"[UART RAW] {data.strip()}")
             recv_buffer += data
             test = len(recv_buffer)
             while "\n" in recv_buffer:
@@ -371,7 +403,6 @@ def read_data():
                 if not line:
                     continue
 
-                #print("[DEBUG] >>> LINE RECEIVED:", line)
                 # Input waveform (IWAVE: or IWAVE0:, IWAVE1:, etc.)
                 if line.startswith("IWAVE"):
                     try:
@@ -420,10 +451,10 @@ def read_data():
                     parse_log_line(line)
 
         except Exception as e:
+            if connected:
+                log_debug(f"Connection lost: {e}")
             connected = False
-            #wait_for_connection()
-            log_debug("UART error: " + str(e))
-
+            time.sleep(RETRY_INTERVAL)
 
 modeDisplay = "false"
 
@@ -491,7 +522,6 @@ def animate(i):
         if modeDisplay == "false":
             tk.Label(left_frame, text="Running on A53 (Linux)", font=("Helvetica", 14, "bold"), bg = "#f0f0f0", fg = "black").pack(pady=40)
             modeDisplay = "true"
-
     if dsp_x:
         ax2.plot(dsp_x, dsp_y, label="DSP Latency", color='green')
         if modeDisplay == "false":
@@ -571,18 +601,10 @@ left_frame.pack_propagate(False)
 
 tk.Label(left_frame, text="FFT Index", font=("Helvetica", 14, "bold"), bg = "#f0f0f0", fg = "black").pack(pady=20)
 bass_slider = tk.Scale(left_frame, from_=0, to=256, resolution=1, length=300, width=30, orient=tk.HORIZONTAL,
-    command=lambda val: send_gain_command("BASS", val))
+    command=lambda val: send_param_command("FFT INDEX", val))
 bass_slider.set(0)
 bass_slider.pack(pady=5)
 
-"""
-tk.Label(left_frame, text="Run Mode").pack()
-arm_button = tk.Button(left_frame, text="Run on A53", command=lambda: set_mode("ARM"))
-arm_button.pack(pady=2)
-dsp_button = tk.Button(left_frame, text="Run on C7x", command=lambda: set_mode("DSP"))
-dsp_button.pack(pady=2)
-highlight_buttons()
-"""
 middle_frame = tk.Frame(left_frame, bg="#f0f0f0")
 middle_frame.place(relx=0.5, rely=0.5, anchor="center")
 
