@@ -9,7 +9,7 @@ Welcome to the project documentation for **RPMsg DMA Offload**. This project dem
 This repository contains:
 - A shared library `librpmsg_dma.so` for interfacing with RPMsg and DMA Heaps
 - A demo application `audio_offload` that supports:
-  - FFT-based audio equalizer (bass/mid/treble)
+  - FFT-based audio processing
   - ARM/DSP execution switching
   - IP-based(ethernet) runtime control and logging
 
