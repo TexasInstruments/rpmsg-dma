@@ -1,8 +1,8 @@
-#include "config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include "config.h"
 
 // ========== Default Config Values ==========
 char PCM_DEVICE[] = "default";

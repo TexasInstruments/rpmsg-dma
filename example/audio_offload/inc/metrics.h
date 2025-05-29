@@ -1,8 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <string.h>
+#ifndef METRICS_H
+#define METRICS_H
 
 float get_cpu_load();
 void log_superbuf(int16_t *superbuf);
@@ -17,3 +14,5 @@ void log_summary(int frames, double total_latency, double min_latency, double ma
                  double total_amp, double min_amp, double max_amp,
                  double total_cpu, double min_cpu, double max_cpu,
                  double total_dsp, double min_dsp, double max_dsp);
+
+#endif //METRICS_H

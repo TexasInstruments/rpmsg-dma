@@ -2,6 +2,9 @@ LIB_NAME = rpmsg_dma
 VERSION = 1.0
 MAJOR = 1
 OBJ = $(patsubst src/%.c,obj/%.o,$(wildcard src/*.c))
+OBJ_DIR = obj
+LIB_DIR = lib
+EXAMPLE_DIRS = example/*/
 
 CFLAGS = -Wall -fPIC -Iinclude
 LDFLAGS += -Wl,--hash-style=gnu -shared -Wl,-soname,lib$(LIB_NAME).so.$(MAJOR)
@@ -10,10 +13,10 @@ LDFLAGS += -Wl,--hash-style=gnu -shared -Wl,-soname,lib$(LIB_NAME).so.$(MAJOR)
 
 all: dirs lib/lib$(LIB_NAME).so.$(VERSION) example
 
-lib: lib/lib$(LIB_NAME).so.$(VERSION)
+lib: dirs lib/lib$(LIB_NAME).so.$(VERSION)
 
 dirs:
-	@mkdir -p lib obj
+	@mkdir -p $(OBJ_DIR) $(LIB_DIR)
 
 obj/%.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@

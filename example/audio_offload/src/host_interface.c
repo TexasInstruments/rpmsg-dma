@@ -1,10 +1,16 @@
-#include "host_interface.h"
-#include "config.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <string.h>
+#include <termios.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <arpa/inet.h>
+#include "host_interface.h"
+#include "config.h"
 
 int uart_fd;
 int server_log_fd, client_log_fd;

@@ -1,3 +1,9 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <errno.h>
+#include <rproc_id.h>
+#include <ti_rpmsg_char.h>
 #include "rpmsg.h"
 #include "dmabuf.h"
 

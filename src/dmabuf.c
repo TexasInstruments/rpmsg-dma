@@ -1,5 +1,15 @@
-#include "dmabuf.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/ioctl.h>
+#include <sys/mman.h>
+#include <linux/dma-heap.h>
+//#include <linux/dma-buf.h>
 #include <errno.h>
+#include "dmabuf.h"
+#include "remoteproc_cdev.h"
 
 // ========================= DMA Heap Utilities ================================
 

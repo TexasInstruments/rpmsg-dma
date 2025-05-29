@@ -1,26 +1,5 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <string.h>
-#include <time.h>
-#include <termios.h>
-#include <pthread.h>
-#include <sys/mman.h>
-#include <sys/ioctl.h>
-#include <alsa/asoundlib.h>
-
-#include <sndfile.h>
-#include <math.h>
-#include <fftw3.h>
-
-#include <rproc_id.h>
-#include <ti_rpmsg_char.h>
-#include <linux/rpmsg.h>
-#include <linux/dma-buf.h>
-#include <linux/dma-heap.h>
-#include <linux/remoteproc_cdev.h>
-#include "config.h"
+#ifndef RPMSG_AUDIO_EXAMPLE_H
+#define RPMSG_AUDIO_EXAMPLE_H
 
 char CFG_FILE_PATH[] = "/etc/dsp_offload.cfg";
 
@@ -92,3 +71,5 @@ char *dev_name = NULL;
 params_t *dspParams;
 local_buf_t lbuf;
 ipc_msg_buf_t ibuf;
+
+#endif //RPMSG_AUDIO_EXAMPLE_H

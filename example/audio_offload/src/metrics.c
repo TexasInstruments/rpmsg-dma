@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdint.h>
 #include "metrics.h"
 #include "host_interface.h"
 

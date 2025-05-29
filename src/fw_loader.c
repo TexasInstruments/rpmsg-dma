@@ -1,3 +1,8 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include"fw_loader.h" 
 
 int read_state(char* remote_proc_state_path, char *buf, size_t maxlen) {

@@ -1,3 +1,10 @@
+#include <stdio.h>
+#include <stdint.h>
+#include <pthread.h>
+#include <alsa/asoundlib.h>
+#include <sndfile.h>
+#include <fftw3.h>
+#include "config.h"
 #include "rpmsg_audio_example.h"
 #include "rpmsg.h"
 #include "dmabuf.h"
@@ -137,6 +144,7 @@ void *run_eq_thread(void *arg)
 
 		clock_gettime(CLOCK_MONOTONIC, &t1);
 		current_mode ? process_on_dsp() : process_on_arm();
+		return;
 		clock_gettime(CLOCK_MONOTONIC, &t2);
 
 		double lat = time_diff_ms(t1, t2);
