@@ -1,4 +1,4 @@
-EXAMPLE_NAME = audio_offload
+EXAMPLE_NAME = rpmsg_audio_offload_example
 EXAMPLE_DIR = $(shell pwd)
 SRC = $(wildcard src/*.c)
 INC = -Iinc -Isrc -I../../include
