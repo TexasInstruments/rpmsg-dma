@@ -138,9 +138,8 @@ Return Value
 ```
 Run the following commands from the root:
 
-make            # Builds both library and example
-make lib        # Builds only the shared library
-make example    # Builds only the audio_offload_example
+cmake -S . -B build
+cmake --build build
 ```
 
 ## ▶ Usage
