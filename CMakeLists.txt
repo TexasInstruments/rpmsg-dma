@@ -1,16 +1,22 @@
 cmake_minimum_required(VERSION 3.10)
-project(rpmsg_dma C)
+project(ti_rpmsg_dma C)
 
-# Set C standard
-set(CMAKE_C_STANDARD 23)
-
-# Include top-level include directory
-include_directories(include)
-
-# Add subdirectories for library and example app
-add_subdirectory(src)
-add_subdirectory(example/audio_offload)
-
-# Enable install directory variables like CMAKE_INSTALL_LIBDIR
+set(CMAKE_CXX_STANDARD 23)
 include(GNUInstallDirs)
 
+
+# Define build options (ON by default)
+option(BUILD_LIB "Build the rpmsg_dma library" ON)
+option(BUILD_EXAMPLE "Build the audio_offload example" ON)
+
+# Global include path
+include_directories(${CMAKE_SOURCE_DIR}/include)
+
+# Conditionally add subdirectories
+if(BUILD_LIB)
+    add_subdirectory(src)
+endif()
+
+if(BUILD_EXAMPLE)
+    add_subdirectory(example/audio_offload)
+endif()
