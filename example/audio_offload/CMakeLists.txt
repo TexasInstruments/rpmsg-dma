@@ -1,8 +1,8 @@
 include(FindPkgConfig)
 
-pkg_check_modules(fftw3 REQUIRED IMPORTED_TARGET fftw3)
-pkg_check_modules(sndfile REQUIRED IMPORTED_TARGET sndfile)
-pkg_check_modules(alsa REQUIRED IMPORTED_TARGET alsa)
+find_library(FFTW_LIB fftw3 REQUIRED)
+find_library(SNDFILE_LIB sndfile REQUIRED)
+find_library(ALSA_LIB asound REQUIRED)
 
 file(GLOB_RECURSE SRC_FILES "src/*.c")
 
@@ -15,10 +15,14 @@ target_include_directories(rpmsg_audio_offload_example PRIVATE
 )
 
 target_link_libraries(rpmsg_audio_offload_example
-	PkgConfig::fftw3
-	PkgConfig::sndfile
-	PkgConfig::alsa
-	rpmsg_dma
+        ${FFTW_LIB}
+        ${SNDFILE_LIB}
+        ${ALSA_LIB}
+	ti_rpmsg_dma
 )
 
-install(TARGETS rpmsg_audio_offload_example RUNTIME DESTINATION bin)
+install(TARGETS rpmsg_audio_offload_example RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/config/dsp_offload.cfg
+        DESTINATION /etc)
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/audio_sample/sample_audio.wav
+        DESTINATION /opt)

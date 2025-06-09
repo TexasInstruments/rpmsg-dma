@@ -7,6 +7,8 @@ project(ti-rpmsg-dma
 	LANGUAGES C
 )
 
+option(BUILD_EXAMPLE "Build the audio_offload example" ON)
+
 find_library(TI_RPMSG_CHAR NAMES ti_rpmsg_char)
 if(NOT TI_RPMSG_CHAR)
 	message(FATAL_ERROR "Required ti_rpmsg_char library not found")
@@ -17,13 +19,13 @@ if(TI_RPMSG_CHAR_INCLUDE_DIR-NOTFOUND)
 	message(FATAL_ERROR "Required headers not found")
 endif()
 
-add_library(rpmsg_dma SHARED
+add_library(ti_rpmsg_dma SHARED
 	src/dmabuf.c
 	src/fw_loader.c
 	src/rpmsg.c
 )
 
-target_include_directories(rpmsg_dma
+target_include_directories(ti_rpmsg_dma
 	PRIVATE
 		${CMAKE_SOURCE_DIR}/src
 		${TI_RPMSG_CHAR_INCLUDE_DIR}
@@ -31,10 +33,10 @@ target_include_directories(rpmsg_dma
 		${CMAKE_SOURCE_DIR}/include
 )
 
-target_compile_options(rpmsg_dma PRIVATE -Wall)
+target_compile_options(ti_rpmsg_dma PRIVATE -Wall)
 
-target_link_libraries(rpmsg_dma PRIVATE "-Wl,--no-undefined")
-target_link_libraries(rpmsg_dma PRIVATE
+target_link_libraries(ti_rpmsg_dma PRIVATE "-Wl,--no-undefined")
+target_link_libraries(ti_rpmsg_dma PRIVATE
 	${TI_RPMSG_CHAR}
 )
 
@@ -44,13 +46,15 @@ set(RPMSG_DMA_HEADERS
 	include/rpmsg.h
 )
 
-set_target_properties(rpmsg_dma PROPERTIES VERSION ${PROJECT_VERSION})
-set_target_properties(rpmsg_dma PROPERTIES SOVERSION ${PROJECT_VERSION_MAJOR})
-set_target_properties(rpmsg_dma PROPERTIES PUBLIC_HEADER "${RPMSG_DMA_HEADERS}")
+set_target_properties(ti_rpmsg_dma PROPERTIES VERSION ${PROJECT_VERSION})
+set_target_properties(ti_rpmsg_dma PROPERTIES SOVERSION ${PROJECT_VERSION_MAJOR})
+set_target_properties(ti_rpmsg_dma PROPERTIES PUBLIC_HEADER "${RPMSG_DMA_HEADERS}")
 
-install(TARGETS rpmsg_dma
+install(TARGETS ti_rpmsg_dma
 	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 	PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
 )
 
-add_subdirectory(example/audio_offload)
+if(BUILD_EXAMPLE)
+	add_subdirectory(example/audio_offload)
+endif()
