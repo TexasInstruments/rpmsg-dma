@@ -4,25 +4,7 @@
 #include <ctype.h>
 #include "config.h"
 
-// ========== Default Config Values ==========
-char PCM_DEVICE[] = "default";
-char UART_DEVICE[] = "/dev/ttyS2";
-char RPROC_DEV_NAME[] = "/dev/remoteproc0";
-char DMA_HEAP_RESERVED[] = "linux,cma";
-char SAMPLE_AUDIO_FILE[] = "/opt/sample.wav";
-char FW_LINK_PATH[] = "/lib/firmware/am62a-c71_0-fw";
-char C7_OLD_FW_PATH[] = "/lib/firmware/ti-ipc/am62axx/ipc_echo_test_c7x_1_release_strip.xe71";
-char C7_NEW_FW_PATH[] = "/lib/firmware/ti-ipc/am62axx/C7_dsp_offload-example.xe71";
-char C7_STATE_PATH[] = "/sys/class/remoteproc/remoteproc0/state";
-
-int C7_PROC_ID = 8;
-int REMOTE_ENDPT = 14;
-int DATA_SIZE = 4096;
-int PARAM_SIZE = 4096;
-int DSP_EXEC_MODE = 0;
-int DSP_GRAPH_ID = 10;
-int HOST_ETH_INTERFACE = 0;
-int DSP_FFT_LENGTH = 0;
+AppConfig app_config = {0};
 
 // ========== Helper ==========
 static void trim(char *str)
@@ -33,6 +15,26 @@ static void trim(char *str)
 	end = str + strlen(str) - 1;
 	while (end > str && isspace((unsigned char)*end)) end--;
 	*(end + 1) = '\0';
+}
+
+void init_config_defaults()
+{
+	app_config.pcm_device = strdup("default");
+	app_config.uart_device = strdup("/dev/ttyS2");
+	app_config.rproc_dev_name = strdup("/dev/remoteproc0");
+	app_config.dma_heap_reserved = strdup("linux,cma");
+	app_config.sample_audio_file = strdup("/opt/sample.wav");
+	app_config.fw_link_path = strdup("/lib/firmware/am62a-c71_0-fw");
+	app_config.c7_old_fw_path = strdup("/lib/firmware/ti-ipc/am62axx-c71-fw-old.xe71");
+	app_config.c7_new_fw_path = strdup("/lib/firmware/ti-ipc/am62axx-c71-fw-new.xe71");
+	app_config.c7_state_path= strdup("/sys/class/remoteproc/remoteproc0/state");
+	app_config.c7_proc_id = 8;
+	app_config.remote_endpoint = 14;
+	app_config.data_buffer_size = 4096;
+	app_config.param_buffer_size = 4096;
+	app_config.fft_bin_index = 0;
+	app_config.is_host_eth_iface = true;
+	app_config.is_dsp_execution = true;
 }
 
 // ========== Config Loader ==========
@@ -52,22 +54,60 @@ void load_config(const char *filename)
 			trim(key);
 			trim(val);
 			// Strings
-			if (strcmp(key, "PCM_DEVICE") == 0) strncpy(PCM_DEVICE, val, sizeof(PCM_DEVICE));
-			else if (strcmp(key, "UART_DEVICE") == 0) strncpy(UART_DEVICE, val, sizeof(UART_DEVICE));
-			else if (strcmp(key, "RPROC_DEV_NAME") == 0) strncpy(RPROC_DEV_NAME, val, sizeof(RPROC_DEV_NAME));
-			else if (strcmp(key, "DMA_HEAP_RESERVED") == 0) strncpy(DMA_HEAP_RESERVED, val, sizeof(DMA_HEAP_RESERVED));
-			else if (strcmp(key, "SAMPLE_AUDIO_FILE") == 0) strncpy(SAMPLE_AUDIO_FILE, val, sizeof(SAMPLE_AUDIO_FILE));
-
+			if (strcmp(key, "PCM_DEVICE") == 0) {
+				free(app_config.pcm_device);
+				app_config.pcm_device = strdup(val);
+			}
+			else if (strcmp(key, "UART_DEVICE") == 0) {
+				free(app_config.uart_device);
+				app_config.uart_device = strdup(val);
+			}
+			else if (strcmp(key, "RPROC_DEV_NAME") == 0) {
+				free(app_config.rproc_dev_name);
+				app_config.rproc_dev_name = strdup(val);
+			}
+			else if (strcmp(key, "DMA_HEAP_RESERVED") == 0) {
+				free(app_config.dma_heap_reserved);
+				app_config.dma_heap_reserved = strdup(val);
+			}
+			else if (strcmp(key, "SAMPLE_AUDIO_FILE") == 0) {
+				free(app_config.sample_audio_file);
+				app_config.sample_audio_file = strdup(val);
+			}
 			// Integers
-			else if (strcmp(key, "C7_PROC_ID") == 0) C7_PROC_ID = atoi(val);
-			else if (strcmp(key, "REMOTE_ENDPT") == 0) REMOTE_ENDPT = atoi(val);
-			else if (strcmp(key, "DATA_SIZE") == 0) DATA_SIZE = atoi(val);
-			else if (strcmp(key, "PARAM_SIZE") == 0) PARAM_SIZE = atoi(val);
-			else if (strcmp(key, "DSP_EXEC_MODE") == 0) DSP_EXEC_MODE = atoi(val);
-			else if (strcmp(key, "DSP_GRAPH_ID") == 0) DSP_GRAPH_ID = atoi(val);
-			else if (strcmp(key, "HOST_ETH_INTERFACE") == 0) HOST_ETH_INTERFACE = atoi(val);
-			else if (strcmp(key, "DSP_FFT_LENGTH") == 0) DSP_FFT_LENGTH = atoi(val);
+			else if (strcmp(key, "C7_PROC_ID") == 0) app_config.c7_proc_id = atoi(val);
+			else if (strcmp(key, "REMOTE_ENDPT") == 0) app_config.remote_endpoint = atoi(val);
+			else if (strcmp(key, "DATA_SIZE") == 0) app_config.data_buffer_size = atoi(val);
+			else if (strcmp(key, "PARAM_SIZE") == 0) app_config.param_buffer_size = atoi(val);
+			else if (strcmp(key, "DSP_EXEC_MODE") == 0) app_config.is_dsp_execution = atoi(val);
+			else if (strcmp(key, "HOST_ETH_INTERFACE") == 0) app_config.is_host_eth_iface = atoi(val);
+			else if (strcmp(key, "sample_audio_file") == 0) app_config.fft_bin_index = atoi(val);
 		}
 	}
 	fclose(fp);
+	print_config();
+}
+
+void print_config()
+{
+	printf("PCM Device       : %s\n", app_config.pcm_device);
+	printf("UART Device       : %s\n", app_config.uart_device);
+	printf("Remoteproc Device : %s\n", app_config.rproc_dev_name);
+	printf("DMA Heap Reserved : %s\n", app_config.dma_heap_reserved);
+	printf("Sample Audio File : %s\n", app_config.sample_audio_file);
+	printf("Remote endpoint : %d\n",app_config.remote_endpoint);
+	printf("Date BUffer size : %d\n", app_config.data_buffer_size);
+	printf("param buffer size : %d\n", app_config.param_buffer_size);
+	printf("is DSP mode execution : %d\n", app_config.is_dsp_execution);
+	printf("Host eth interface : %d\n", app_config.is_host_eth_iface);
+	printf("FFT length : %d\n", app_config.fft_bin_index);
+}
+
+void cleanup_config()
+{
+	free(app_config.pcm_device);
+	free(app_config.uart_device);
+	free(app_config.rproc_dev_name);
+	free(app_config.dma_heap_reserved);
+	free(app_config.sample_audio_file);
 }

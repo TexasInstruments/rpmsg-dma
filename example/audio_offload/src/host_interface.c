@@ -177,11 +177,11 @@ void *cmd_listener(void *arg)
 void init_host_interface()
 {
 
-	if(HOST_ETH_INTERFACE) {
+	if(app_config.is_host_eth_iface) {
 		init_log_interface();
 		init_cmd_interface();
 	} else {
-		uart_fd = open(UART_DEVICE, O_RDWR | O_NOCTTY);
+		uart_fd = open(app_config.uart_device, O_RDWR | O_NOCTTY);
 		if (uart_fd < 0) perror("UART open failed"), exit(1);
 
 		struct termios tty;

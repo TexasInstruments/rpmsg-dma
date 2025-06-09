@@ -24,8 +24,10 @@ SNDFILE *sf;
 void handle_sigint(int sig) {
 	printf("\n Caught signal %d (Ctrl+C). Cleaning up...\n", sig);
 	if(current_mode) {
-		switch_firmware(C7_OLD_FW_PATH, FW_LINK_PATH, C7_STATE_PATH);
+		switch_firmware(app_config.c7_old_fw_path,
+                                app_config.fw_link_path, app_config.c7_state_path);
 	}
+	cleanup_config();
 	exit(0);
 }
 
@@ -131,7 +133,7 @@ void *run_eq_thread(void *arg)
 		return NULL;
 	}
 
-	snd_pcm_open(&pcm, PCM_DEVICE, SND_PCM_STREAM_PLAYBACK, 0);
+	snd_pcm_open(&pcm, app_config.pcm_device, SND_PCM_STREAM_PLAYBACK, 0);
 	snd_pcm_set_params(pcm, SND_PCM_FORMAT_S16_LE, SND_PCM_ACCESS_RW_INTERLEAVED, 1, SAMPLE_RATE, 1, 1000000);
 
 	while(1) {
@@ -204,27 +206,30 @@ int main(int argc, char **argv)
 	const char* input_file = NULL;
 
 	load_config(CFG_FILE_PATH);
-	input_file = SAMPLE_AUDIO_FILE;
-	current_mode = (ExecMode)DSP_EXEC_MODE;
+	input_file = app_config.sample_audio_file;
+	current_mode = (ExecMode)app_config.is_dsp_execution;
 
 	// Register signal handler for SIGINT
 	signal(SIGINT, handle_sigint);
 
 	if(current_mode) {
 		// Load Test firmware
-		switch_firmware(C7_NEW_FW_PATH, FW_LINK_PATH, C7_STATE_PATH);
+		switch_firmware(app_config.c7_new_fw_path,
+				app_config.fw_link_path, app_config.c7_state_path);
 		sleep(1);
 	}
 
-	rpmsg_fd = init_rpmsg(C7_PROC_ID, REMOTE_ENDPT);
-	dmabuf_heap_init(DMA_HEAP_RESERVED, DATA_SIZE, RPROC_DEV_NAME, &data_dma_buf_params);
-	dmabuf_heap_init(DMA_HEAP_RESERVED, PARAM_SIZE, RPROC_DEV_NAME, &options_dma_buf_params);
-	init_rpmsg_buffer(DSP_GRAPH_ID);
+	rpmsg_fd = init_rpmsg(app_config.c7_proc_id, app_config.remote_endpoint);
+	dmabuf_heap_init(app_config.dma_heap_reserved,
+			app_config.data_buffer_size, app_config.rproc_dev_name, &data_dma_buf_params);
+	dmabuf_heap_init(app_config.dma_heap_reserved,
+			app_config.param_buffer_size, app_config.rproc_dev_name, &options_dma_buf_params);
+	init_rpmsg_buffer(0);
 	init_host_interface();
 
 	if(current_mode) {
 		dmabuf_sync(options_dma_buf_params.dma_buf_fd, DMA_BUF_SYNC_END);
-		dspParams->zeroFFTLength = DSP_FFT_LENGTH;
+		dspParams->zeroFFTLength = app_config.fft_bin_index;
 		dmabuf_sync(options_dma_buf_params.dma_buf_fd, DMA_BUF_SYNC_END);
 	}
 
@@ -252,11 +257,12 @@ int main(int argc, char **argv)
 
 	dmabuf_heap_destroy(&data_dma_buf_params);
 	dmabuf_heap_destroy(&options_dma_buf_params);
-
 	if(current_mode) {
 		// Revert to original firmware
-		switch_firmware(C7_OLD_FW_PATH, FW_LINK_PATH, C7_STATE_PATH);
+		switch_firmware(app_config.c7_old_fw_path,
+                                app_config.fw_link_path, app_config.c7_state_path);
 	}
+	cleanup_config();
 	return 0;
 }
 
