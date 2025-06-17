@@ -2,7 +2,7 @@
 #define METRICS_H
 
 float get_cpu_load();
-void log_superbuf(int16_t *superbuf);
+void log_superbuf(int16_t *superbuf, int num_frames, int num_channels, int ch);
 void update_metrics(float lat, float amp, float cpu, float dsp,
                     double *total_latency, double *min_latency, double *max_latency,
                     double *total_amp, double *min_amp, double *max_amp,

@@ -74,6 +74,22 @@ void load_config(const char *filename)
 				free(app_config.sample_audio_file);
 				app_config.sample_audio_file = strdup(val);
 			}
+			else if (strcmp(key, "FW_LINK_PATH") == 0) {
+				free(app_config.fw_link_path);
+				app_config.fw_link_path = strdup(val);
+			}
+			else if (strcmp(key, "C7_OLD_FW_PATH") == 0) {
+				free(app_config.c7_old_fw_path);
+				app_config.c7_old_fw_path = strdup(val);
+			}
+			else if (strcmp(key, "C7_NEW_FW_PATH") == 0) {
+				free(app_config.c7_new_fw_path);
+				app_config.c7_new_fw_path = strdup(val);
+			}
+			else if (strcmp(key, "C7_STATE_PATH") == 0) {
+				free(app_config.c7_state_path);
+				app_config.c7_state_path = strdup(val);
+			}
 			// Integers
 			else if (strcmp(key, "C7_PROC_ID") == 0) app_config.c7_proc_id = atoi(val);
 			else if (strcmp(key, "REMOTE_ENDPT") == 0) app_config.remote_endpoint = atoi(val);
@@ -85,7 +101,6 @@ void load_config(const char *filename)
 		}
 	}
 	fclose(fp);
-	print_config();
 }
 
 void print_config()
@@ -96,11 +111,15 @@ void print_config()
 	printf("DMA Heap Reserved : %s\n", app_config.dma_heap_reserved);
 	printf("Sample Audio File : %s\n", app_config.sample_audio_file);
 	printf("Remote endpoint : %d\n",app_config.remote_endpoint);
-	printf("Date BUffer size : %d\n", app_config.data_buffer_size);
+	printf("Date buffer size : %d\n", app_config.data_buffer_size);
 	printf("param buffer size : %d\n", app_config.param_buffer_size);
 	printf("is DSP mode execution : %d\n", app_config.is_dsp_execution);
 	printf("Host eth interface : %d\n", app_config.is_host_eth_iface);
 	printf("FFT length : %d\n", app_config.fft_bin_index);
+	printf("C7 new : %s\n", app_config.c7_new_fw_path);
+	printf("C7 old : %s\n", app_config.c7_old_fw_path);
+	printf("C7 state : %s\n", app_config.c7_state_path);
+	printf("C7 link : %s\n", app_config.fw_link_path);
 }
 
 void cleanup_config()

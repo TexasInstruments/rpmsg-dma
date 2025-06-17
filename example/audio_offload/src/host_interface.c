@@ -41,7 +41,6 @@ void* wait_for_log_client(void* arg)
 	struct sockaddr_in client;
 	socklen_t client_len = sizeof(client);
 	listen(server_log_fd, 1);
-	printf("Waiting for GUI log connection on port %d...\n", LOG_PORT);
 	client_log_fd = accept(server_log_fd, (struct sockaddr *)&client, &client_len);
 	printf("Log channel connected: %s\n", inet_ntoa(client.sin_addr));
 	fflush(stdout);
@@ -53,7 +52,6 @@ void* wait_for_cmd_client(void* arg)
 	struct sockaddr_in client;
 	socklen_t client_len = sizeof(client);
 	listen(server_cmd_fd, 1);
-	printf("Waiting for GUI cmd connection on port %d...\n", CMD_PORT);
 	client_cmd_fd = accept(server_cmd_fd, (struct sockaddr *)&client, &client_len);
 	printf("Cmd channel connected: %s\n", inet_ntoa(client.sin_addr));
 	printf("Cmd channel accepted on fd %d\n", client_cmd_fd);

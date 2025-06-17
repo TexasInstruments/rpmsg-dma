@@ -3,10 +3,12 @@
 
 char CFG_FILE_PATH[] = "/etc/dsp_offload.cfg";
 
-#define FRAME_SIZE              256
-#define SAMPLE_RATE             48000
-#define SHM_SIZE                (FRAME_SIZE * sizeof(int16_t))
-#define DSP_PARAMS_OFFSET       (2 * SHM_SIZE)
+
+#define CHANNELS        8
+#define SAMPLE_RATE     48000
+#define BITS_PER_SAMPLE 16
+#define FRAME_SIZE      (CHANNELS * (BITS_PER_SAMPLE / 8))
+#define NUM_FRAMES      256
 
 #define BASIC_EQ_FFT            1
 #define BASIC_PITCH_SHIFTING    0

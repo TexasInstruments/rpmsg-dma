@@ -599,11 +599,14 @@ left_frame = tk.Frame(root,width=370, bg="#f0f0f0")
 left_frame.pack(side=tk.LEFT, fill=tk.Y)
 left_frame.pack_propagate(False)
 
+tk.Label(left_frame, text="Channel 1 Data Display", font=("Helvetica", 14, "bold"), bg = "#f0f0f0", fg = "black").pack(pady=20)
+
 tk.Label(left_frame, text="FFT Index", font=("Helvetica", 14, "bold"), bg = "#f0f0f0", fg = "black").pack(pady=20)
 bass_slider = tk.Scale(left_frame, from_=0, to=256, resolution=1, length=300, width=30, orient=tk.HORIZONTAL,
     command=lambda val: send_param_command("FFT INDEX", val))
 bass_slider.set(0)
 bass_slider.pack(pady=5)
+
 
 middle_frame = tk.Frame(left_frame, bg="#f0f0f0")
 middle_frame.place(relx=0.5, rely=0.5, anchor="center")

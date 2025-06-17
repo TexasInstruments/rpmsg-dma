@@ -3,27 +3,34 @@
 #include "metrics.h"
 #include "host_interface.h"
 
-#define FRAME_SIZE              256
+#define MAX_LOG_LINE 2048
 
-void send_wave_in(int16_t *inbuf)
+void send_wave_in(int16_t *inbuf, int num_frames, int num_channels, int ch)
 {
-	char line[2048];
+	if (ch < 0 || ch >= num_channels)
+		return;
+
+	char line[MAX_LOG_LINE];
 	int off = snprintf(line, sizeof(line), "IWAVE:");
-	for (int i = 0; i < FRAME_SIZE; ++i) {
+	for (int i = 0; i < num_frames; ++i) {
 		off += snprintf(line + off, sizeof(line) - off,
-		i == FRAME_SIZE - 1 ? "%d\n" : "%d,", inbuf[i]);
+			i == num_frames - 1 ? "%d\n" : "%d,", inbuf[i * num_channels + ch]);
 		if (off >= (int)sizeof(line)) break;
 	}
 	enqueue_log(line);
 }
 
-void send_wave_out(int16_t *outbuf)
+
+void send_wave_out(int16_t *outbuf, int num_frames, int num_channels, int ch)
 {
-	char line[2048];
+	if (ch < 0 || ch >= num_channels)
+		return;
+
+	char line[MAX_LOG_LINE];
 	int off = snprintf(line, sizeof(line), "WAVE:");
-	for (int i = 0; i < FRAME_SIZE; ++i) {
+	for (int i = 0; i < num_frames; ++i) {
 		off += snprintf(line + off, sizeof(line) - off,
-		i == FRAME_SIZE - 1 ? "%d\n" : "%d,", outbuf[i]);
+			i == num_frames - 1 ? "%d\n" : "%d,", outbuf[i * num_channels + ch]);
 		if (off >= (int)sizeof(line)) break;
 	}
 	enqueue_log(line);
@@ -71,10 +78,10 @@ void update_metrics(float lat, float amp, float cpu, float dsp,
 	if (dsp > *max_dsp) *max_dsp = dsp;
 }
 
-void log_superbuf(int16_t *superbuf)
+void log_superbuf(int16_t *superbuf, int num_frames, int num_channels, int ch)
 {
-	send_wave_in(&superbuf[0]);
-	send_wave_out(&superbuf[FRAME_SIZE]);
+	send_wave_in(&superbuf[0], num_frames, num_channels, ch);
+	send_wave_out(&superbuf[num_frames], num_frames, num_channels, ch);
 }
 
 void log_frame_metrics(int exec_mode, int frames, float amp, float lat, float cpu, float dsp)

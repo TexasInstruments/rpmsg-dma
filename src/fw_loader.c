@@ -72,6 +72,5 @@ int switch_firmware(char* new_fw, char* fw_link, char* remote_proc_state_path) {
     if (write_state_if_needed(remote_proc_state_path, "start") < 0)
         return -1;
 
-    printf("New Firmware loaded...\n");
     return 0;
 }
