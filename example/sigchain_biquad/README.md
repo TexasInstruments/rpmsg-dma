@@ -1,4 +1,4 @@
-# Signal Chain Biquad Example
+# RPMSG Signal Chain Biquad Example
 ```
 This example demonstrates real-time 3-stage parametric equalizer (biquad cascade) processing
 on TI C7x DSP with dual operation modes: Network GUI control and Command-line execution.
@@ -31,7 +31,7 @@ cmake -S . -B build
 cmake --build build
 - This will build:
   - The shared library (`libti_rpmsg_dma.so`)
-  - The board application (`signal_chain_biquad_linux_example`)
+  - The board application (`rpmsg_sigchain_biquad_example`)
 
 To install the built files (requires root privileges):
 sudo cmake --install build
@@ -54,8 +54,8 @@ The board application provides a multi-port TCP server:
 ```
 1. Ensure your C7x firmware image is installed under /lib/firmware/.
 2. Launch the example:
-   GUI mode (network server):     sudo ./signal_chain_biquad_linux_example
-   Command-line mode:             sudo ./signal_chain_biquad_linux_example [commands...]
+   GUI mode (network server):     sudo ./rpmsg_sigchain_biquad_example
+   Command-line mode:             sudo ./rpmsg_sigchain_biquad_example [commands...]
 3. Monitor logs via UART console/dmesg.
 
 Available commands for command-line mode:
@@ -70,8 +70,8 @@ Command-line mode features:
 - Continuous performance monitoring during sleep commands
 
 Examples:
-  sudo ./signal_chain_biquad_linux_example start sleep:10 stop
-  sudo ./signal_chain_biquad_linux_example start sleep:5 stop
+  sudo ./rpmsg_sigchain_biquad_example start sleep:10 stop
+  sudo ./rpmsg_sigchain_biquad_example start sleep:5 stop
 
 Return codes:
   0 = All commands executed successfully (PASSED)

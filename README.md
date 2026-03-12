@@ -15,7 +15,7 @@ This repository contains:
     - IP-based(ethernet) and uart based monitoring, runtime control and logging
   2. `rpmsg_2dfft_offload_example`:
     - Test data 2DFFT processing on C7x DSP
-  3. `sigchain_biquad_linux_example`:
+  3. `rpmsg_sigchain_biquad_linux_example`:
     - Real-time 3-stage parametric equalizer (biquad cascade) on C7x DSP
     - Network-based GUI control and monitoring
     - MCASP audio I/O with I2C codec control
@@ -68,11 +68,11 @@ example/2dfft/
     ├── inc/                    - Example headers
     ├── test_data/              - Input sample and expected output sample data
     ├── firmware	        - C7 DSP firmware for examples
-example/signal_chain_biquad/
-    ├── src/                    - Board-side Linux application source
+example/sigchain_biquad/
+    ├── src/                    - Example source
     ├── inc/                    - Example headers
-    ├── host_utility/                    - PC-side Python GUI for network control
-    ├── firmware	        - C7x DSP Cascade Biquad Parametric EQ Signal Chain Example Firmware
+    ├── host_utility/           - Host side python utility for monitor and control
+    ├── firmware	        - C7x DSP firmware for example
 CMakeLists.txt
 LICENSE
 README.md
@@ -186,7 +186,9 @@ This installs:
 - The example binary to `/usr/bin`
 - The configuration file (`dsp_offload.cfg`) to `/etc`
 - The sample audio file (`sample_audio.wav`) to `/usr/share/`
-- The C7 DSP firmware file (`dsp_audio_filter_offload.c75ss0-0.release.strip.out`) to `/usr/lib/`
+- The C7 DSP example firmware files to `/usr/lib/`
+- The 2dfft example test data set fils to  `usr/share/2dfft_test_data`
+- The library header files to `/usr/local/include`
 
 Optional:
 To build only the library or only the example, use:
@@ -214,14 +216,14 @@ cmake -S . -B build -DBUILD_SIGCHAIN_BIQUAD_EXAMPLE=OFF # disables sigchain_biqu
       - `2dfft_expected_output_data.bin` to `/usr/share/2dfft_test_data/`
       - `dsp_2dfft_offload.c75ss0-0.release.strip.out` to `/usr/lib/firmware`
     3. sigchain_biquad example
-      - `sigchain_biquad_linux_example` to `/usr/bin/` (board-side application)
+      - `rpmsg_sigchain_biquad_example` to `/usr/bin/` (board-side application)
       - `signal_chain_biquad_example_gui.py` to PC (network GUI)
       - `sigchain_biquad_cascade_c75ss0-0_freertos_linux.release.strip.out` to `/lib/firmware/`
 
 4. Run:
-   - Audio offload: `rpmsg_audio_offload_example`
+   - Audio offload: `rpmsg_audio_offload_example` (on evm) + `audmon.py  <mode: uart|ip> <EVM COM port|IP address>` (on host machine)
    - 2D FFT: `rpmsg_2dfft_example`
-   - Cascade Biquad Parametric EQ Signal Chain Example: `sigchain_biquad_linux_example` (on board) + `python3 signal_chain_biquad_example_gui.py <board_ip>` (on PC)
+   - Cascade Biquad Parametric EQ Signal Chain Example: `rpmsg_sigchain_biquad_example` (on evm) + `python3 signal_chain_biquad_example_gui.py <EVM IP address>` (on host machine)
 
 4. Monitor UART or system logs for output.
 

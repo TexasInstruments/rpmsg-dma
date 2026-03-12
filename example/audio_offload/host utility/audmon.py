@@ -22,7 +22,7 @@ import serial
 
 # Parse mode and address/port
 if len(sys.argv) < 3:
-    print("Usage: python GUI-V2.py <mode: uart|ip> <COM port|IP address>")
+    print("Usage: python audmon.py <mode: uart|ip> <EVM COM port|IP address>")
     sys.exit(1)
 
 MODE = sys.argv[1].lower()
