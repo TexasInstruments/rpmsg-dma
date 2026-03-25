@@ -65,6 +65,10 @@ is_running = False
 log_console = None
 node_label = None
 
+def on_close():
+    print("Closing app...")
+    root.destroy()
+    sys.exit(0)
 
 def compute_spectrum(samples):
     """Compute FFT magnitude spectrum of a sample buffer."""
@@ -627,7 +631,8 @@ toggle_filter.state = True  # Initial state: ON
 # GUI Setup
 root = tk.Tk()
 root.title("Audio DSP OFFLOAD GUI")
-root.attributes("-fullscreen", True)
+#root.attributes("-fullscreen", True)
+#root.overrideredirect(False);
 left_frame = tk.Frame(root,width=370, bg="#f0f0f0")
 left_frame.pack(side=tk.LEFT, fill=tk.Y)
 left_frame.pack_propagate(False)
@@ -680,4 +685,5 @@ canvas.get_tk_widget().pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 ani = animation.FuncAnimation(fig, animate, interval=500)
 threading.Thread(target=read_data, daemon=True).start()
 root.bind('<Control-s>', save_data_and_logs)
+root.protocol("WM_DELETE_WINDOW", on_close)
 root.mainloop()
