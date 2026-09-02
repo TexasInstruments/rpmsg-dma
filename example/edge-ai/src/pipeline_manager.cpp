@@ -1,14 +1,13 @@
 #include "pipeline_manager.h"
 #include "pipeline_common.h"
 #include "audio_utils.h"
-#include "tvm_pipeline.h"
-#include "stft_istft_pipeline.h"
 #include "speech_enhancement_pipeline.h"
-#include "speech_classification_pipeline.h"
+#include "audio_classification_pipeline.h"
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
+#include <unistd.h>
 
 extern "C" {
 #include <json-c/json.h>
@@ -55,15 +54,15 @@ int PipelineManager::preload_default_model()
         return 0;
     }
 
+    // Write cache so daemon loads correct artifacts on next restart
+    if (!write_model_cache(artifacts))
+        std::cerr << "[App] Warning: cannot write model cache: " << MODEL_CACHE_FILE << std::endl;
+
     tvm_client_ = std::make_shared<TvmInferenceClient>();
     if (!tvm_client_->initialize(artifacts)) {
         std::cerr << "[App] Failed to load default model from: " << artifacts << std::endl;
         return -1;
     }
-    tvm_client_->set_input_shape({1, 2, 401, 161});
-
-    if (!write_model_cache(artifacts))
-        std::cerr << "[App] Warning: model loaded but cache write failed" << std::endl;
 
     std::cout << "[App] Default model loaded and cached." << std::endl;
     return 0;
@@ -74,7 +73,6 @@ int PipelineManager::preload_default_model()
 PipelineManager::PipelineManager()
     : initialized_(false)
 {
-    state_.artifacts_loaded = false;
     state_.tvm_artifacts_configured = false;
     state_.input_configured = false;
 }
@@ -126,6 +124,24 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
         state_.tvm_artifacts_paths = {path};
         state_.tvm_artifacts_configured = true;
         std::cout << "[App] TVM artifacts configured: " << path << std::endl;
+
+        // Restart daemon if a different model is requested
+        const std::string cached = read_model_cache();
+        if (cached != path) {
+            std::cout << "[App] Model changed (" << cached << " -> " << path
+                      << "), restarting daemon..." << std::endl;
+            write_model_cache(path);
+            int ret = ::system("systemctl restart tvm-model-daemon");
+            (void)ret;
+            // Wait for daemon to be ready (socket appears)
+            for (int i = 0; i < 60; ++i) {
+                ::sleep(1);
+                if (std::filesystem::exists("/var/run/tvm-inference.sock")) {
+                    std::cout << "[App] Daemon ready." << std::endl;
+                    break;
+                }
+            }
+        }
     }
 
     // Configure input file
@@ -159,14 +175,10 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
     const auto& pipeline_type = state_.pipeline_config.pipeline_type;
     CommandResult result;
 
-    if (pipeline_type == "tvm_only") {
-        result = run_tvm_pipeline(state_, *tvm_client_);
-    } else if (pipeline_type == "speech_enhancement") {
+    if (pipeline_type == "speech_enhancement") {
         result = run_speech_enhancement_pipeline(state_, *generic_client_, *tvm_client_, debug_);
-    } else if (pipeline_type == "stft_istft") {
-        result = run_stft_istft_pipeline(state_, *generic_client_, debug_);
-    } else if (pipeline_type == "speech_classification") {
-        result = run_speech_classification_pipeline(state_, *generic_client_, debug_);
+    } else if (pipeline_type == "audio_classification") {
+        result = run_audio_classification_pipeline(state_, *generic_client_, *tvm_client_, debug_);
     } else {
         std::cout << "[App] Error: Unknown pipeline_type: " << pipeline_type << std::endl;
         return -1;
@@ -199,9 +211,26 @@ bool PipelineManager::loadPipelineFromJson(const std::string& json_content)
     if (!read_string(root.get(), "pipeline_type", config.pipeline_type, true) ||
         !read_string(root.get(), "description",   config.description,   false) ||
         !read_string(root.get(), "input_file",    config.input_file,    true) ||
-        !read_string(root.get(), "artifacts_path",config.artifacts_path, false)) {
+        !read_string(root.get(), "artifacts_path",config.artifacts_path, false) ||
+        !read_string(root.get(), "labels_path",   config.labels_path,   false)) {
         std::cout << "[App] Error: Missing or invalid pipeline field" << std::endl;
         return false;
+    }
+
+    // Optional num_classes (0 = derive from model output at runtime)
+    {
+        json_object* val = nullptr;
+        if (json_object_object_get_ex(root.get(), "num_classes", &val) &&
+            json_object_is_type(val, json_type_int))
+            config.num_classes = static_cast<size_t>(json_object_get_int(val));
+    }
+
+    // Optional overlap_frames (-1 = not set, no overlap-save processing)
+    {
+        json_object* val = nullptr;
+        if (json_object_object_get_ex(root.get(), "overlap_frames", &val) &&
+            json_object_is_type(val, json_type_int))
+            config.overlap_frames = json_object_get_int(val);
     }
 
     // Parse dsp_config — required for pipelines using DSP generic service

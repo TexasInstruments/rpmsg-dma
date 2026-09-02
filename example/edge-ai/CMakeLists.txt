@@ -126,8 +126,8 @@ install(TARGETS tvm_model_daemon DESTINATION ${CMAKE_INSTALL_BINDIR})
 # Install JSON pipeline configuration files to /usr/share/tvm_inference/json/
 install(FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_speech_enhancement.json
-${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_speech_classification_yamnet.json
-${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_speech_classification_vggish.json
+${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_audio_classification_yamnet.json
+${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_audio_classification_vggish.json
 DESTINATION ${CMAKE_INSTALL_DATADIR}/tvm_inference/json)
 
 # Install class label files to /usr/share/tvm_inference/labels/

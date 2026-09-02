@@ -1,0 +1,34 @@
+{
+  "pipeline_type": "audio_classification",
+  "description": "VGGish: audio -> STFT log-mel spectrogram -> TVM classification (UrbanSound8K 10 classes)",
+  "input_file": "/usr/share/tvm_inference/input/urbansound_16k.wav",
+  "artifacts_path": "/usr/share/tvm_inference/artifacts/vggish",
+  "labels_path": "/usr/share/tvm_inference/labels/vggish_label_list.txt",
+  "num_classes": 10,
+  "dsp_config": {
+    "proc_id": 8,
+    "endpoint": 13
+  },
+  "stages": [
+    {
+      "stage_id": "stft_analysis",
+      "service": "generic",
+      "message_type": "C7X_MSG_STFT_ANALYZE",
+      "parameters": {
+        "selected_model": 3,
+        "hop_size": 512,
+        "model_elems": 64,
+        "total_frames": 126,
+        "batch_n": 64
+      }
+    },
+    {
+      "stage_id": "tvm_inference",
+      "service": "tvm",
+      "message_type": "TVM_INFERENCE",
+      "parameters": {
+        "input_shape": "1,1,126,64"
+      }
+    }
+  ]
+}

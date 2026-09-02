@@ -1,0 +1,34 @@
+{
+  "pipeline_type": "audio_classification",
+  "description": "YAMNet: speech -> STFT log-mel spectrogram -> TVM classification (521 classes)",
+  "input_file": "/usr/share/tvm_inference/input/speech_whistling2.wav",
+  "artifacts_path": "/usr/share/tvm_inference/artifacts/yamnet",
+  "labels_path": "/usr/share/tvm_inference/labels/yamnet_label_list.txt",
+  "num_classes": 521,
+  "dsp_config": {
+    "proc_id": 8,
+    "endpoint": 13
+  },
+  "stages": [
+    {
+      "stage_id": "stft_analysis",
+      "service": "generic",
+      "message_type": "C7X_MSG_STFT_ANALYZE",
+      "parameters": {
+        "selected_model": 4,
+        "hop_size": 160,
+        "model_elems": 64,
+        "total_frames": 96,
+        "batch_n": 64
+      }
+    },
+    {
+      "stage_id": "tvm_inference",
+      "service": "tvm",
+      "message_type": "TVM_INFERENCE",
+      "parameters": {
+        "input_shape": "1,1,96,64"
+      }
+    }
+  ]
+}
