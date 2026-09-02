@@ -28,7 +28,7 @@
 #include <string>
 #include <vector>
 
-static constexpr const char* DEFAULT_ARTIFACTS = "/usr/share/tvm_inference/artifacts/";
+static constexpr const char* DEFAULT_ARTIFACTS = "/usr/share/tvm_inference/artifacts/gcrn";
 
 static constexpr const char* C7X_FW_LINK      = "/lib/firmware/am62d-c71_0-fw";
 static constexpr const char* C7X_FW_TARGET    = "/lib/firmware/ti-ipc/am62dxx/dsp_edgeai.c75ss0-0.release.strip.out";
@@ -193,7 +193,8 @@ void handle_client(int cfd, TvmInferenceClient& tvm) {
         }
 
         const auto t0 = std::chrono::steady_clock::now();
-        const bool ok = tvm.run_inference(input, output);
+        const bool ok = tvm.run_inference(input, output,
+            std::vector<int64_t>{static_cast<int64_t>(n_floats)});
         const double ms = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count() / 1000.0;
 
@@ -220,12 +221,29 @@ void handle_client(int cfd, TvmInferenceClient& tvm) {
 
 } // namespace
 
+static constexpr const char* MODEL_CACHE_FILE = "/var/lib/tvm_inference/loaded_model";
+
+static std::string read_model_cache() {
+    int fd = ::open(MODEL_CACHE_FILE, O_RDONLY);
+    if (fd < 0) return {};
+    char buf[512] = {};
+    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0) return {};
+    std::string s(buf, static_cast<size_t>(n));
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    return s;
+}
+
 int main(int argc, char* argv[]) {
-    std::string artifacts = DEFAULT_ARTIFACTS;
+    // Priority: --artifacts arg > cache file > hardcoded default
+    std::string artifacts;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--artifacts" && i + 1 < argc)
             artifacts = argv[++i];
     }
+    if (artifacts.empty()) artifacts = read_model_cache();
+    if (artifacts.empty()) artifacts = DEFAULT_ARTIFACTS;
 
     std::cout << "[daemon] Loading TVM artifacts from: " << artifacts << '\n';
 
@@ -236,7 +254,6 @@ int main(int argc, char* argv[]) {
 
     TvmInferenceClient tvm;
     tvm.disable_daemon();               /* must not try to connect to itself */
-    tvm.set_input_shape({1, 2, 401, 161});
 
     if (!tvm.initialize(artifacts)) {
         std::cerr << "[daemon] Failed to load model — aborting\n";
