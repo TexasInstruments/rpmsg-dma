@@ -33,14 +33,16 @@ void print_usage(std::string_view program)
 {
     std::cout
         << "Usage:\n"
-        << "  " << program << " <pipeline.json>          Run a JSON pipeline\n"
-        << "  " << program << " <pipeline.json> --debug  Enable per-batch logs\n"
-        << "  " << program << " --preload                Load default model into C7x (run at boot)\n"
-        << "  " << program << " --version                Show version and build info\n"
-        << "  " << program << " --help                   Show this help\n\n"
+        << "  " << program << " <pipeline.json>           Run a JSON pipeline\n"
+        << "  " << program << " <pipeline.json> --stream  Stream raw PCM from stdin continuously\n"
+        << "  " << program << " <pipeline.json> --debug   Enable per-batch logs\n"
+        << "  " << program << " --preload                 Load default model into C7x (run at boot)\n"
+        << "  " << program << " --version                 Show version and build info\n"
+        << "  " << program << " --help                    Show this help\n\n"
         << "Examples:\n"
         << "  " << program << " pipeline_tvm_inference.json\n"
-        << "  " << program << " pipeline_speech_enhancement.json --debug\n";
+        << "  arecord -t raw -f S16_LE -c 1 -r 16000 | " << program
+        << " pipeline_speech_classification_yamnet.json --stream\n";
 }
 
 } // namespace
@@ -49,8 +51,9 @@ int main(int argc, char* argv[])
 {
     try {
         std::string json_file;
-        bool debug = false;
+        bool debug   = false;
         bool preload = false;
+        bool stream  = false;
 
         for (int index = 1; index < argc; ++index) {
             const std::string_view argument{argv[index]};
@@ -68,6 +71,10 @@ int main(int argc, char* argv[])
             }
             if (argument == "--preload") {
                 preload = true;
+                continue;
+            }
+            if (argument == "--stream") {
+                stream = true;
                 continue;
             }
             if (argument.rfind("--", 0) == 0) {
@@ -100,7 +107,9 @@ int main(int argc, char* argv[])
         if (preload)
             return application.preload_default_model();
 
-        const int exit_code = application.run_from_json_file(json_file);
+        const int exit_code = stream
+            ? application.run_from_json_file_stream(json_file)
+            : application.run_from_json_file(json_file);
         std::cout << "[App] Application exited with code " << exit_code << '\n';
         return exit_code;
     } catch (const std::exception& error) {

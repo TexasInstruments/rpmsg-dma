@@ -75,6 +75,7 @@ public:
     ~PipelineManager();
     bool initialize();
     int run_from_json_file(const std::string& json_file_path);
+    int run_from_json_file_stream(const std::string& json_file_path);
     int preload_default_model();
     void set_debug(bool enable) { debug_ = enable; }
 
