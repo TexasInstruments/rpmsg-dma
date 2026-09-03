@@ -32,6 +32,8 @@ set(EDGE_AI_SOURCES
     src/audio_utils.cpp
     src/speech_enhancement_pipeline.cpp
     src/audio_classification_pipeline.cpp
+    src/tvm_pipeline.cpp
+    src/stft_istft_pipeline.cpp
 )
 
 # Create the executable
@@ -80,12 +82,16 @@ target_include_directories(rpmsg_inference_example PRIVATE ${JSON_C_INCLUDE_DIRS
 # Find audio libraries for WAV file processing
 find_library(SNDFILE_LIB sndfile REQUIRED)
 
+# Find ALSA for live PCM capture via --device
+find_library(ALSA_LIB asound REQUIRED)
+
 # Link with required libraries
 target_link_libraries(rpmsg_inference_example
     ${TVM_RUNTIME_LIB}
     ti_rpmsg_dma
     ${JSON_C_LIBRARIES}
     ${SNDFILE_LIB}
+    ${ALSA_LIB}
     pthread
     dl
 )
@@ -125,6 +131,8 @@ install(TARGETS tvm_model_daemon DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Install JSON pipeline configuration files to /usr/share/tvm_inference/json/
 install(FILES
+${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_stft_istft.json
+${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_tvm_inference.json
 ${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_speech_enhancement.json
 ${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_audio_classification_yamnet.json
 ${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_audio_classification_vggish.json

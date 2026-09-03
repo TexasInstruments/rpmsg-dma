@@ -20,4 +20,14 @@ PipelineManager::CommandResult run_audio_classification_pipeline_stream(
     TvmInferenceClient& tvm_client,
     bool debug);
 
+/* ALSA capture variant: opens alsa_device directly (S16LE, 16 kHz, mono) and
+ * runs inference windows indefinitely until the process receives SIGTERM/SIGINT.
+ * No external arecord process required — the binary owns the audio device. */
+PipelineManager::CommandResult run_audio_classification_pipeline_alsa(
+    PipelineManager::State& state,
+    DspTaskClient& dsp_client,
+    TvmInferenceClient& tvm_client,
+    bool debug,
+    const std::string& alsa_device);
+
 #endif // AUDIO_CLASSIFICATION_PIPELINE_H

@@ -76,8 +76,10 @@ public:
     bool initialize();
     int run_from_json_file(const std::string& json_file_path);
     int run_from_json_file_stream(const std::string& json_file_path);
+    int run_from_device_stream(const std::string& json_file_path, const std::string& alsa_device);
     int preload_default_model();
     void set_debug(bool enable) { debug_ = enable; }
+    void set_input_file_override(const std::string& path) { input_file_override_ = path; }
 
 private:
     std::shared_ptr<TvmInferenceClient> tvm_client_;
@@ -85,6 +87,7 @@ private:
     State state_;
     bool initialized_;
     bool debug_ = false;
+    std::string input_file_override_; /* set via --input-file; overrides JSON input_file */
 
     bool validateConfiguration();
     bool loadPipelineFromJson(const std::string& json_content);

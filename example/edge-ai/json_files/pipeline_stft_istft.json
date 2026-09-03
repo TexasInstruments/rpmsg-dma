@@ -1,0 +1,53 @@
+{
+  "pipeline_type": "stft_istft",
+  "description": "STFT round-trip pipeline: STFT analyze -> deinterleave -> interleave -> ISTFT synthesize",
+  "input_file": "/usr/share/tvm_inference/input/input_audio.wav",
+  "dsp_config": {
+    "proc_id": 8,
+    "endpoint": 13
+  },
+  "stages": [
+    {
+      "stage_id": "stft_analysis",
+      "service": "generic",
+      "message_type": "C7X_MSG_STFT_ANALYZE",
+      "parameters": {
+        "selected_model": 2,
+        "hop_size": 160,
+        "model_elems": 322,
+        "total_frames": 401,
+        "batch_n": 64
+      }
+    },
+    {
+      "stage_id": "deinterleave",
+      "service": "generic",
+      "message_type": "C7X_DEINTERLEAVE_MSG_ANALYZE",
+      "parameters": {
+        "fft_size": 320,
+        "flag": 0
+      }
+    },
+    {
+      "stage_id": "interleave",
+      "service": "generic",
+      "message_type": "C7X_DEINTERLEAVE_MSG_ANALYZE",
+      "parameters": {
+        "fft_size": 320,
+        "flag": 1
+      }
+    },
+    {
+      "stage_id": "stft_synthesis",
+      "service": "generic",
+      "message_type": "C7X_MSG_ISTFT_SYNTHESIZE",
+      "parameters": {
+        "selected_model": 2,
+        "hop_size": 160,
+        "model_elems": 322,
+        "total_frames": 401,
+        "batch_n": 64
+      }
+    }
+  ]
+}

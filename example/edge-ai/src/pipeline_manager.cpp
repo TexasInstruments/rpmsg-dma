@@ -3,12 +3,13 @@
 #include "audio_utils.h"
 #include "speech_enhancement_pipeline.h"
 #include "audio_classification_pipeline.h"
+#include "tvm_pipeline.h"
+#include "stft_istft_pipeline.h"
 #include <unistd.h>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
-#include <unistd.h>
 
 extern "C" {
 #include <json-c/json.h>
@@ -145,6 +146,10 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
         }
     }
 
+    // Apply --input-file override before validation
+    if (!input_file_override_.empty())
+        state_.pipeline_config.input_file = input_file_override_;
+
     // Configure input file
     if (state_.pipeline_config.input_file.empty()) {
         std::cout << "[App] Error: No input_file specified in pipeline JSON" << std::endl;
@@ -180,6 +185,10 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
         result = run_speech_enhancement_pipeline(state_, *generic_client_, *tvm_client_, debug_);
     } else if (pipeline_type == "audio_classification") {
         result = run_audio_classification_pipeline(state_, *generic_client_, *tvm_client_, debug_);
+    } else if (pipeline_type == "tvm_only") {
+        result = run_tvm_pipeline(state_, *tvm_client_);
+    } else if (pipeline_type == "stft_istft") {
+        result = run_stft_istft_pipeline(state_, *generic_client_, debug_);
     } else {
         std::cout << "[App] Error: Unknown pipeline_type: " << pipeline_type << std::endl;
         return -1;
@@ -258,6 +267,81 @@ int PipelineManager::run_from_json_file_stream(const std::string& json_file_path
 
     const CommandResult result = run_audio_classification_pipeline_stream(
         state_, *generic_client_, *tvm_client_, debug_);
+
+    return (result == CommandResult::SUCCESS) ? 0 : 1;
+}
+
+int PipelineManager::run_from_device_stream(const std::string& json_file_path,
+                                            const std::string& alsa_device)
+{
+    if (!initialize()) {
+        std::cout << "[App] Failed to initialize application" << std::endl;
+        return -1;
+    }
+
+    std::ifstream file(json_file_path);
+    if (!file.is_open()) {
+        std::cout << "[App] Error: JSON file not found: " << json_file_path << std::endl;
+        return -1;
+    }
+
+    std::string json_content((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    if (!loadPipelineFromJson(json_content)) {
+        std::cout << "[App] Error: Failed to parse pipeline configuration" << std::endl;
+        return -1;
+    }
+
+    state_.current_pipeline_file = json_file_path;
+
+    std::cout << "[App] Pipeline type: " << state_.pipeline_config.pipeline_type << std::endl;
+    std::cout << "[App] Description: "   << state_.pipeline_config.description   << std::endl;
+
+    if (state_.pipeline_config.pipeline_type != "audio_classification") {
+        std::cout << "[App] Error: --device only supported for audio_classification pipelines" << std::endl;
+        return -1;
+    }
+
+    /* Same daemon-restart logic as run_from_json_file. */
+    if (!state_.pipeline_config.artifacts_path.empty()) {
+        const std::string& path = state_.pipeline_config.artifacts_path;
+        if (!std::filesystem::exists(path)) {
+            std::cout << "[App] Error: Artifacts path not found: " << path << std::endl;
+            return -1;
+        }
+        state_.tvm_artifacts_paths = {path};
+        state_.tvm_artifacts_configured = true;
+        std::cout << "[App] TVM artifacts configured: " << path << std::endl;
+
+        const std::string cached = read_model_cache();
+        if (cached != path) {
+            std::cout << "[App] Model changed (" << cached << " -> " << path
+                      << "), restarting daemon..." << std::endl;
+            write_model_cache(path);
+            int ret = ::system("systemctl restart tvm-model-daemon");
+            (void)ret;
+            for (int i = 0; i < 60; ++i) {
+                ::sleep(1);
+                if (std::filesystem::exists("/var/run/tvm-inference.sock")) {
+                    std::cout << "[App] Daemon ready." << std::endl;
+                    break;
+                }
+            }
+        }
+    }
+
+    bool has_tvm = false;
+    for (const auto& stage : state_.pipeline_config.stages)
+        if (stage.service == "tvm") { has_tvm = true; break; }
+    if (has_tvm && !state_.tvm_artifacts_configured) {
+        std::cout << "[App] Error: Pipeline has TVM stages but no TVM artifacts configured" << std::endl;
+        return -1;
+    }
+
+    std::cout << "[App] Stages: " << state_.pipeline_config.stages.size() << std::endl;
+
+    const CommandResult result = run_audio_classification_pipeline_alsa(
+        state_, *generic_client_, *tvm_client_, debug_, alsa_device);
 
     return (result == CommandResult::SUCCESS) ? 0 : 1;
 }
