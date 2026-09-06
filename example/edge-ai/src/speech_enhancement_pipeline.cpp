@@ -176,6 +176,7 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
 
         std::vector<float> deint_output_data;
         std::vector<float> inter_input_data;
+        AudioStream audio_stream;
 
         auto t_total_start = std::chrono::steady_clock::now();
 
@@ -201,6 +202,7 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
 
                 dma_buf1.begin_cpu_access();
                 std::fill_n(dma_buf1.data<std::byte>(), audio_batch_bytes, std::byte{});
+                audio_stream.send_frame(0, dma_buf1.data<std::byte>(), samples_this_batch * sizeof(int16_t));
                 if (audio_offset < audio_data.size()) {
                     const size_t available = std::min(samples_this_batch,
                                                       audio_data.size() - audio_offset);
@@ -347,6 +349,7 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
                 }
 
                 std::copy_n(out_ptr, samples_this_batch, std::back_inserter(chunk_output));
+                audio_stream.send_frame(1, out_ptr, samples_this_batch * sizeof(int16_t));
                 dma_buf4.end_cpu_access();
             }
             double t_istft_ms = std::chrono::duration_cast<std::chrono::microseconds>(
