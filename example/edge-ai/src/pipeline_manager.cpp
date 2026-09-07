@@ -161,13 +161,14 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
         return -1;
     }
     const auto extension = std::filesystem::path{input_file}.extension();
-    if (extension == ".wav")
+    if (extension == ".wav") {
         state_.input_type = InputType::AUDIO_WAV;
-    else if (extension == ".bin")
+    } else if (extension == ".bin") {
         state_.input_type = InputType::TENSOR_BIN;
-    else {
-        std::cout << "[App] Warning: Unknown input type for file: " << input_file << std::endl;
-        state_.input_type = InputType::UNKNOWN;
+    } else {
+        std::cout << "[App] Error: Unsupported input file extension: " << extension
+                  << " (expected .wav or .bin)" << std::endl;
+        return -1;
     }
     state_.current_input_file = input_file;
     state_.input_configured = true;
@@ -176,9 +177,26 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
     if (!validateConfiguration())
         return -1;
 
-    std::cout << "[App] Stages: " << state_.pipeline_config.stages.size() << std::endl;
-
     const auto& pipeline_type = state_.pipeline_config.pipeline_type;
+
+    // Validate input type per pipeline
+    if (pipeline_type == "tvm_only") {
+        if (state_.input_type != InputType::TENSOR_BIN) {
+            std::cout << "[App] Error: tvm_only pipeline requires a .bin input file" << std::endl;
+            return -1;
+        }
+    } else if (pipeline_type == "speech_enhancement" ||
+               pipeline_type == "stft_istft" ||
+               pipeline_type == "audio_classification") {
+        if (state_.input_type != InputType::AUDIO_WAV) {
+            std::cout << "[App] Error: " << pipeline_type
+                      << " pipeline requires a .wav input file" << std::endl;
+            return -1;
+        }
+    }
+
+
+    std::cout << "[App] Stages: " << state_.pipeline_config.stages.size() << std::endl;
     CommandResult result;
 
     if (pipeline_type == "speech_enhancement") {
@@ -422,7 +440,7 @@ bool PipelineManager::loadPipelineFromJson(const std::string& json_content)
             !read_string(object, "stage_id",     stage.stage_id,     true) ||
             !read_string(object, "service",      stage.service,      true) ||
             !read_string(object, "message_type", stage.message_type, true) ||
-            (stage.service != "generic" && stage.service != "tvm")) {
+            (stage.service != "dsp" && stage.service != "tvm")) {
             std::cout << "[App] Error: Invalid pipeline stage at index " << index << std::endl;
             return false;
         }

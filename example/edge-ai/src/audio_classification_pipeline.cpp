@@ -47,9 +47,6 @@ PipelineManager::CommandResult run_audio_classification_pipeline(
     bool debug)
 {
     try {
-        if (state.input_type != PipelineManager::InputType::AUDIO_WAV)
-            throw PipelineError{"audio_classification pipeline requires a .wav input file"};
-
         const PipelineManager::PipelineStage* stft_stage_ptr = nullptr;
         const PipelineManager::PipelineStage* tvm_stage_ptr  = nullptr;
         for (const auto& stage : state.pipeline_config.stages) {

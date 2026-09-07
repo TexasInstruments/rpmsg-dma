@@ -19,9 +19,6 @@ PipelineManager::CommandResult run_stft_istft_pipeline(
     bool debug)
 {
     try {
-        if (state.input_type != PipelineManager::InputType::AUDIO_WAV)
-            throw PipelineError{"Unknown input type"};
-
         // Find required stages
         const PipelineManager::PipelineStage* stft_stage_ptr  = nullptr;
         const PipelineManager::PipelineStage* deint_stage_ptr = nullptr;

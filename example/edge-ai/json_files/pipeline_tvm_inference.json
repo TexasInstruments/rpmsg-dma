@@ -8,7 +8,9 @@
       "stage_id": "tvm_inference",
       "service": "tvm",
       "message_type": "TVM_INFERENCE",
-      "parameters": {}
+      "parameters": {
+        "input_shape": "1,2,401,161"
+      }
     }
   ]
 }

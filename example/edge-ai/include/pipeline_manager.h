@@ -49,7 +49,6 @@ public:
     };
 
     enum class InputType {
-        UNKNOWN,
         AUDIO_WAV,
         TENSOR_BIN
     };
@@ -63,7 +62,7 @@ public:
         InputType input_type;
         bool input_configured;
 
-        State() : input_type(InputType::UNKNOWN) {}
+        State() : input_type(InputType::AUDIO_WAV) {}
     };
 
     // Path where the currently-loaded model artifacts path is persisted across runs

@@ -11,7 +11,7 @@
   "stages": [
     {
       "stage_id": "stft_analysis",
-      "service": "generic",
+      "service": "dsp",
       "message_type": "C7X_MSG_STFT_ANALYZE",
       "parameters": {
         "selected_model": 2,
@@ -23,7 +23,7 @@
     },
     {
       "stage_id": "deinterleave",
-      "service": "generic",
+      "service": "dsp",
       "message_type": "C7X_DEINTERLEAVE_MSG_ANALYZE",
       "parameters": {
         "fft_size": 320,
@@ -40,7 +40,7 @@
     },
     {
       "stage_id": "interleave",
-      "service": "generic",
+      "service": "dsp",
       "message_type": "C7X_DEINTERLEAVE_MSG_ANALYZE",
       "parameters": {
         "fft_size": 320,
@@ -49,7 +49,7 @@
     },
     {
       "stage_id": "stft_synthesis",
-      "service": "generic",
+      "service": "dsp",
       "message_type": "C7X_MSG_ISTFT_SYNTHESIZE",
       "parameters": {
         "selected_model": 2,

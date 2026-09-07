@@ -12,7 +12,7 @@
   "stages": [
     {
       "stage_id": "stft_analysis",
-      "service": "generic",
+      "service": "dsp",
       "message_type": "C7X_MSG_STFT_ANALYZE",
       "parameters": {
         "selected_model": 4,
