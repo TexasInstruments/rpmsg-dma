@@ -54,7 +54,7 @@ struct dma_buf_params;
 // === FIRMWARE CONFIGURATION ===
 
 /** @brief Path to the base C7x firmware (to restore on exit) */
-#define C7_BASE_FW      "/lib/firmware/ti-ipc/am62dxx/dsp_edgeai.c75ss0-0.release.strip.out"
+#define C7_BASE_FW      "/lib/firmware/ti-ipc/am62dxx/dsp_edgeai_c7x_1_release_strip.out"
 
 /** @brief Path to the signal chain biquad cascade firmware */
 #define C7_SIGCHAIN_FW  "/lib/firmware/sigchain_biquad_cascade.c75ss0-0.release.strip.out"

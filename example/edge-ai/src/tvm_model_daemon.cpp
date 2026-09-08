@@ -31,7 +31,7 @@
 static constexpr const char* DEFAULT_ARTIFACTS = "/usr/share/tvm_inference/artifacts/gcrn";
 
 static constexpr const char* C7X_FW_LINK      = "/lib/firmware/am62d-c71_0-fw";
-static constexpr const char* C7X_FW_TARGET    = "/lib/firmware/ti-ipc/am62dxx/dsp_edgeai.c75ss0-0.release.strip.out";
+static constexpr const char* C7X_FW_TARGET    = "/lib/firmware/ti-ipc/am62dxx/dsp_edgeai_c7x_1_release_strip.out";
 static constexpr const char* RPROC_STATE      = "/sys/class/remoteproc/remoteproc0/state";
 static constexpr int         BOOT_TIMEOUT_S   = 60;
 static constexpr int         STOP_TIMEOUT_S   = 1;
