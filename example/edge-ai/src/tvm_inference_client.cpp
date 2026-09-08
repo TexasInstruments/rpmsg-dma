@@ -133,6 +133,60 @@ bool TvmInferenceClient::try_daemon_connect() {
     return true;
 }
 
+bool TvmInferenceClient::switch_model(const std::string& artifacts_path) {
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, TvmDaemon::SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(fd);
+        return false;
+    }
+
+    /* PING/PONG handshake — confirms daemon is alive before sending LOAD_MODEL */
+    TvmDaemon::Header ping{TvmDaemon::MAGIC,
+                           static_cast<uint32_t>(TvmDaemon::MsgType::PING), 0};
+    TvmDaemon::Header pong{};
+    if (!sock_write_all(fd, &ping, sizeof(ping)) ||
+        !sock_read_all(fd, &pong, sizeof(pong)) ||
+        pong.magic != TvmDaemon::MAGIC ||
+        pong.type  != static_cast<uint32_t>(TvmDaemon::MsgType::PONG)) {
+        ::close(fd);
+        return false;
+    }
+
+    /* Send LOAD_MODEL */
+    const uint32_t path_len = static_cast<uint32_t>(artifacts_path.size());
+    TvmDaemon::Header req{TvmDaemon::MAGIC,
+                          static_cast<uint32_t>(TvmDaemon::MsgType::LOAD_MODEL),
+                          path_len};
+    if (!sock_write_all(fd, &req, sizeof(req)) ||
+        !sock_write_all(fd, artifacts_path.data(), path_len)) {
+        ::close(fd);
+        return false;
+    }
+
+    /* Wait for LOAD_RESP or ERROR_RESP */
+    TvmDaemon::Header resp{};
+    bool success = false;
+    if (sock_read_all(fd, &resp, sizeof(resp)) && resp.magic == TvmDaemon::MAGIC) {
+        if (resp.type == static_cast<uint32_t>(TvmDaemon::MsgType::LOAD_RESP)) {
+            success = true;
+        } else if (resp.type == static_cast<uint32_t>(TvmDaemon::MsgType::ERROR_RESP) &&
+                   resp.len > 0) {
+            std::vector<char> msg(resp.len + 1, '\0');
+            sock_read_all(fd, msg.data(), resp.len);
+            std::cerr << "[TVM] switch_model error: " << msg.data() << '\n';
+        }
+    }
+
+    ::close(fd);
+    return success;
+}
+
 bool TvmInferenceClient::run_via_daemon(const float* input, size_t count, std::vector<float>& output) {
     const uint32_t in_bytes = static_cast<uint32_t>(count * sizeof(float));
     TvmDaemon::Header req{TvmDaemon::MAGIC,

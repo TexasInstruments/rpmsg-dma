@@ -94,6 +94,8 @@ private:
     // Model cache: read/write the artifacts path persisted on disk
     static std::string read_model_cache();
     static bool write_model_cache(const std::string& artifacts_path);
+    // Hot-reload daemon model via socket; no root or systemctl required
+    static void ensure_model_loaded(const std::string& artifacts_path);
 };
 
 #endif // PIPELINE_MANAGER_H

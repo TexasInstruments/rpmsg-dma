@@ -53,6 +53,12 @@ public:
     void disable_daemon() noexcept { daemon_skip_ = true; }
     bool is_daemon_mode() const noexcept { return daemon_fd_ >= 0; }
 
+    /* Request the running daemon to hot-reload a different model.
+     * Opens a one-shot connection — no root or systemctl required.
+     * Returns true when the daemon confirms the new model is loaded.
+     * Returns false if the daemon is unreachable or rejects the path. */
+    static bool switch_model(const std::string& artifacts_path);
+
 private:
     // Helper methods
     bool load_artifacts();

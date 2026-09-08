@@ -40,6 +40,30 @@ bool PipelineManager::write_model_cache(const std::string& artifacts_path)
     return true;
 }
 
+// ─── Daemon model-switch helper ───────────────────────────────────────────────
+
+void PipelineManager::ensure_model_loaded(const std::string& path)
+{
+    const std::string cached = read_model_cache();
+    if (cached == path) {
+        std::cout << "[App] Model already loaded: " << path << ", skipping reload." << std::endl;
+        return;
+    }
+    std::cout << "[App] Model changed (" << cached << " -> " << path
+              << "), requesting daemon reload..." << std::endl;
+
+    if (TvmInferenceClient::switch_model(path)) {
+        /* Cache updated by the daemon; mirror it here for consistency. */
+        write_model_cache(path);
+        std::cout << "[App] Daemon reloaded model: " << path << std::endl;
+        return;
+    }
+
+    /* Daemon unreachable — persist the path so it loads the right model on next start. */
+    std::cerr << "[App] Warning: daemon not reachable; caching model path for boot-time load\n";
+    write_model_cache(path);
+}
+
 // ─── Preload default model at boot ────────────────────────────────────────────
 
 int PipelineManager::preload_default_model()
@@ -127,23 +151,7 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
         state_.tvm_artifacts_configured = true;
         std::cout << "[App] TVM artifacts configured: " << path << std::endl;
 
-        // Restart daemon if a different model is requested
-        const std::string cached = read_model_cache();
-        if (cached != path) {
-            std::cout << "[App] Model changed (" << cached << " -> " << path
-                      << "), restarting daemon..." << std::endl;
-            write_model_cache(path);
-            int ret = ::system("systemctl restart tvm-model-daemon");
-            (void)ret;
-            // Wait for daemon to be ready (socket appears)
-            for (int i = 0; i < 60; ++i) {
-                ::sleep(1);
-                if (std::filesystem::exists("/var/run/tvm-inference.sock")) {
-                    std::cout << "[App] Daemon ready." << std::endl;
-                    break;
-                }
-            }
-        }
+        ensure_model_loaded(path);
     }
 
     // Apply --input-file override before validation
@@ -245,7 +253,6 @@ int PipelineManager::run_from_json_file_stream(const std::string& json_file_path
         return -1;
     }
 
-    /* Same daemon-restart logic as run_from_json_file. */
     if (!state_.pipeline_config.artifacts_path.empty()) {
         const std::string& path = state_.pipeline_config.artifacts_path;
         if (!std::filesystem::exists(path)) {
@@ -256,21 +263,7 @@ int PipelineManager::run_from_json_file_stream(const std::string& json_file_path
         state_.tvm_artifacts_configured = true;
         std::cout << "[App] TVM artifacts configured: " << path << std::endl;
 
-        const std::string cached = read_model_cache();
-        if (cached != path) {
-            std::cout << "[App] Model changed (" << cached << " -> " << path
-                      << "), restarting daemon..." << std::endl;
-            write_model_cache(path);
-            int ret = ::system("systemctl restart tvm-model-daemon");
-            (void)ret;
-            for (int i = 0; i < 60; ++i) {
-                ::sleep(1);
-                if (std::filesystem::exists("/var/run/tvm-inference.sock")) {
-                    std::cout << "[App] Daemon ready." << std::endl;
-                    break;
-                }
-            }
-        }
+        ensure_model_loaded(path);
     }
 
     bool has_tvm = false;
@@ -320,7 +313,6 @@ int PipelineManager::run_from_device_stream(const std::string& json_file_path,
         return -1;
     }
 
-    /* Same daemon-restart logic as run_from_json_file. */
     if (!state_.pipeline_config.artifacts_path.empty()) {
         const std::string& path = state_.pipeline_config.artifacts_path;
         if (!std::filesystem::exists(path)) {
@@ -331,21 +323,7 @@ int PipelineManager::run_from_device_stream(const std::string& json_file_path,
         state_.tvm_artifacts_configured = true;
         std::cout << "[App] TVM artifacts configured: " << path << std::endl;
 
-        const std::string cached = read_model_cache();
-        if (cached != path) {
-            std::cout << "[App] Model changed (" << cached << " -> " << path
-                      << "), restarting daemon..." << std::endl;
-            write_model_cache(path);
-            int ret = ::system("systemctl restart tvm-model-daemon");
-            (void)ret;
-            for (int i = 0; i < 60; ++i) {
-                ::sleep(1);
-                if (std::filesystem::exists("/var/run/tvm-inference.sock")) {
-                    std::cout << "[App] Daemon ready." << std::endl;
-                    break;
-                }
-            }
-        }
+        ensure_model_loaded(path);
     }
 
     bool has_tvm = false;

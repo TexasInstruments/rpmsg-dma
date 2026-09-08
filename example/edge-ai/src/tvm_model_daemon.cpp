@@ -123,6 +123,33 @@ static bool wait_for_c7x() {
     return false;
 }
 
+static constexpr const char* MODEL_CACHE_FILE = "/var/lib/tvm_inference/loaded_model";
+
+static std::string read_model_cache() {
+    int fd = ::open(MODEL_CACHE_FILE, O_RDONLY);
+    if (fd < 0) return {};
+    char buf[512] = {};
+    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0) return {};
+    std::string s(buf, static_cast<size_t>(n));
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    return s;
+}
+
+static void write_model_cache(const std::string& path) {
+    int fd = ::open(MODEL_CACHE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        std::cerr << "[daemon] Warning: cannot write model cache: "
+                  << MODEL_CACHE_FILE << '\n';
+        return;
+    }
+    ssize_t n1 = ::write(fd, path.data(), path.size());
+    ssize_t n2 = ::write(fd, "\n", 1);
+    (void)(n1 + n2);
+    ::close(fd);
+}
+
 namespace {
 
 volatile sig_atomic_t g_running  = 1;
@@ -175,6 +202,32 @@ void handle_client(int cfd, TvmInferenceClient& tvm) {
             continue;
         }
 
+        if (hdr.type == static_cast<uint32_t>(TvmDaemon::MsgType::LOAD_MODEL)) {
+            if (hdr.len == 0 || hdr.len > 4095) {
+                const std::string err = "LOAD_MODEL: invalid path length";
+                send_hdr(cfd, TvmDaemon::MsgType::ERROR_RESP,
+                         static_cast<uint32_t>(err.size()));
+                write_all(cfd, err.data(), err.size());
+                continue;
+            }
+            std::string new_path(hdr.len, '\0');
+            if (!read_all(cfd, new_path.data(), hdr.len)) break;
+
+            std::cout << "[daemon] LOAD_MODEL: " << new_path << '\n';
+            if (tvm.initialize(new_path)) {
+                write_model_cache(new_path);
+                send_hdr(cfd, TvmDaemon::MsgType::LOAD_RESP, 0);
+                std::cout << "[daemon] Model loaded: " << new_path << '\n';
+            } else {
+                const std::string err = "failed to load model: " + new_path;
+                send_hdr(cfd, TvmDaemon::MsgType::ERROR_RESP,
+                         static_cast<uint32_t>(err.size()));
+                write_all(cfd, err.data(), err.size());
+                std::cerr << "[daemon] " << err << '\n';
+            }
+            continue;
+        }
+
         if (hdr.type != static_cast<uint32_t>(TvmDaemon::MsgType::INFER_REQ) ||
             hdr.len == 0 || hdr.len % sizeof(float) != 0) {
             const std::string err = "unexpected message type or bad payload size";
@@ -220,20 +273,6 @@ void handle_client(int cfd, TvmInferenceClient& tvm) {
 }
 
 } // namespace
-
-static constexpr const char* MODEL_CACHE_FILE = "/var/lib/tvm_inference/loaded_model";
-
-static std::string read_model_cache() {
-    int fd = ::open(MODEL_CACHE_FILE, O_RDONLY);
-    if (fd < 0) return {};
-    char buf[512] = {};
-    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
-    ::close(fd);
-    if (n <= 0) return {};
-    std::string s(buf, static_cast<size_t>(n));
-    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
-    return s;
-}
 
 int main(int argc, char* argv[]) {
     // Priority: --artifacts arg > cache file > hardcoded default
