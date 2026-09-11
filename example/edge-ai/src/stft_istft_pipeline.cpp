@@ -12,22 +12,6 @@
 #include <stdexcept>
 #include <vector>
 
-namespace {
-
-size_t require_param(const std::map<std::string, std::string>& params,
-                     const char* key, const char* stage)
-{
-    auto it = params.find(key);
-    if (it == params.end())
-        throw PipelineError{std::string{"STFT stage missing required parameter: "} + key +
-                            " (stage: " + stage + ")"};
-    int v = std::stoi(it->second);
-    if (v <= 0)
-        throw PipelineError{std::string{"Parameter must be positive: "} + key};
-    return static_cast<size_t>(v);
-}
-
-} // namespace
 
 PipelineManager::CommandResult run_stft_istft_pipeline(
     PipelineManager::State& state,
@@ -35,9 +19,6 @@ PipelineManager::CommandResult run_stft_istft_pipeline(
     bool debug)
 {
     try {
-        if (state.input_type != PipelineManager::InputType::AUDIO_WAV)
-            throw PipelineError{"Unknown input type"};
-
         // Find required stages
         const PipelineManager::PipelineStage* stft_stage_ptr  = nullptr;
         const PipelineManager::PipelineStage* deint_stage_ptr = nullptr;

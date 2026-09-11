@@ -29,7 +29,7 @@
 #define EXPECTED_OUTPUT_FILE	"/usr/share/2dfft_test_data/2dfft_expected_output_data.bin"
 
 /** @brief Path to the base firmware for the C7x processor. */
-#define C7_BASE_FW		"/lib/firmware/ti-ipc/am62dxx/dsp_edgeai.c75ss0-0.release.strip.out"
+#define C7_BASE_FW		"/lib/firmware/ti-ipc/am62dxx/dsp_edgeai_c7x_1_release_strip.out"
 
 /** @brief Path to the test firmware for the 2D FFT operation. */
 #define C7_TEST_FW		"/lib/firmware/fft2d_linux_dsp_offload_example.c75ss0-0.release.strip.out"

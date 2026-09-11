@@ -33,14 +33,19 @@ void print_usage(std::string_view program)
 {
     std::cout
         << "Usage:\n"
-        << "  " << program << " <pipeline.json>          Run a JSON pipeline\n"
-        << "  " << program << " <pipeline.json> --debug  Enable per-batch logs\n"
-        << "  " << program << " --preload                Load default model into C7x (run at boot)\n"
-        << "  " << program << " --version                Show version and build info\n"
-        << "  " << program << " --help                   Show this help\n\n"
+        << "  " << program << " <pipeline.json>                       Run a JSON pipeline (file input)\n"
+        << "  " << program << " <pipeline.json> --device <alsa-dev>   Capture live PCM from ALSA device\n"
+        << "  " << program << " <pipeline.json> --input-file <path>   Override input_file from JSON\n"
+        << "  " << program << " <pipeline.json> --stream              Read raw PCM from stdin\n"
+        << "  " << program << " <pipeline.json> --debug               Enable per-batch logs\n"
+        << "  " << program << " --preload                             Load default model into C7x\n"
+        << "  " << program << " --version                             Show version and build info\n"
+        << "  " << program << " --help                                Show this help\n\n"
         << "Examples:\n"
-        << "  " << program << " pipeline_tvm_inference.json\n"
-        << "  " << program << " pipeline_speech_enhancement.json --debug\n";
+        << "  " << program << " pipeline_speech_classification_yamnet.json --device plughw:0,0\n"
+        << "  " << program << " pipeline_speech_classification_yamnet.json --input-file /tmp/audio.wav\n"
+        << "  arecord -t raw -f S16_LE -c 1 -r 16000 | "
+        << program << " pipeline_speech_classification_yamnet.json --stream\n";
 }
 
 } // namespace
@@ -49,8 +54,11 @@ int main(int argc, char* argv[])
 {
     try {
         std::string json_file;
-        bool debug = false;
+        std::string alsa_device;
+        std::string input_file_override;
+        bool debug   = false;
         bool preload = false;
+        bool stream  = false;
 
         for (int index = 1; index < argc; ++index) {
             const std::string_view argument{argv[index]};
@@ -68,6 +76,26 @@ int main(int argc, char* argv[])
             }
             if (argument == "--preload") {
                 preload = true;
+                continue;
+            }
+            if (argument == "--stream") {
+                stream = true;
+                continue;
+            }
+            if (argument == "--device" || argument == "-D") {
+                if (index + 1 >= argc) {
+                    std::cerr << "[App] --device requires an ALSA device argument\n";
+                    return EXIT_FAILURE;
+                }
+                alsa_device = argv[++index];
+                continue;
+            }
+            if (argument == "--input-file") {
+                if (index + 1 >= argc) {
+                    std::cerr << "[App] --input-file requires a file path argument\n";
+                    return EXIT_FAILURE;
+                }
+                input_file_override = argv[++index];
                 continue;
             }
             if (argument.rfind("--", 0) == 0) {
@@ -100,7 +128,17 @@ int main(int argc, char* argv[])
         if (preload)
             return application.preload_default_model();
 
-        const int exit_code = application.run_from_json_file(json_file);
+        int exit_code;
+        if (!alsa_device.empty()) {
+            exit_code = application.run_from_device_stream(json_file, alsa_device);
+        } else if (!input_file_override.empty()) {
+            application.set_input_file_override(input_file_override);
+            exit_code = application.run_from_json_file(json_file);
+        } else if (stream) {
+            exit_code = application.run_from_json_file_stream(json_file);
+        } else {
+            exit_code = application.run_from_json_file(json_file);
+        }
         std::cout << "[App] Application exited with code " << exit_code << '\n';
         return exit_code;
     } catch (const std::exception& error) {

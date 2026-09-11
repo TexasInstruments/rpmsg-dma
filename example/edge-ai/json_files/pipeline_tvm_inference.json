@@ -2,13 +2,15 @@
   "pipeline_type": "tvm_only",
   "description": "Direct TVM inference pipeline: BIN tensor input -> TVM inference -> Binary output",
   "input_file": "/usr/share/tvm_inference/input/gcrn_fixed_input.bin",
-  "artifacts_path": "/usr/share/tvm_inference/artifacts/",
+  "artifacts_path": "/usr/share/tvm_inference/artifacts/gcrn",
   "stages": [
     {
       "stage_id": "tvm_inference",
       "service": "tvm",
       "message_type": "TVM_INFERENCE",
-      "parameters": {}
+      "parameters": {
+        "input_shape": "1,2,401,161"
+      }
     }
   ]
 }

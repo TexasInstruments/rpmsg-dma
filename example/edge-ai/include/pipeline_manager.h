@@ -38,6 +38,9 @@ public:
         std::string description;
         std::string input_file;
         std::string artifacts_path;
+        std::string labels_path;      // optional — classification pipelines only
+        size_t      num_classes{0};   // optional — 0 = derive from model output
+        int         overlap_frames{-1}; // optional — enhancement only; -1 = no overlap
         std::vector<PipelineStage> stages;
         DspConfig dsp_config;
         bool loaded;
@@ -46,13 +49,11 @@ public:
     };
 
     enum class InputType {
-        UNKNOWN,
         AUDIO_WAV,
         TENSOR_BIN
     };
 
     struct State {
-        bool artifacts_loaded;
         PipelineConfig pipeline_config;
         std::string current_pipeline_file;
         std::vector<std::string> tvm_artifacts_paths;
@@ -61,20 +62,23 @@ public:
         InputType input_type;
         bool input_configured;
 
-        State() : input_type(InputType::UNKNOWN) {}
+        State() : input_type(InputType::AUDIO_WAV) {}
     };
 
     // Path where the currently-loaded model artifacts path is persisted across runs
     static constexpr const char* MODEL_CACHE_FILE = "/var/lib/tvm_inference/loaded_model";
     // Default artifacts loaded at boot via --preload
-    static constexpr const char* DEFAULT_ARTIFACTS_PATH = "/usr/share/tvm_inference/artifacts/";
+    static constexpr const char* DEFAULT_ARTIFACTS_PATH = "/usr/share/tvm_inference/artifacts/gcrn";
 
     PipelineManager();
     ~PipelineManager();
     bool initialize();
     int run_from_json_file(const std::string& json_file_path);
+    int run_from_json_file_stream(const std::string& json_file_path);
+    int run_from_device_stream(const std::string& json_file_path, const std::string& alsa_device);
     int preload_default_model();
     void set_debug(bool enable) { debug_ = enable; }
+    void set_input_file_override(const std::string& path) { input_file_override_ = path; }
 
 private:
     std::shared_ptr<TvmInferenceClient> tvm_client_;
@@ -82,6 +86,7 @@ private:
     State state_;
     bool initialized_;
     bool debug_ = false;
+    std::string input_file_override_; /* set via --input-file; overrides JSON input_file */
 
     bool validateConfiguration();
     bool loadPipelineFromJson(const std::string& json_content);
@@ -89,6 +94,8 @@ private:
     // Model cache: read/write the artifacts path persisted on disk
     static std::string read_model_cache();
     static bool write_model_cache(const std::string& artifacts_path);
+    // Hot-reload daemon model via socket; no root or systemctl required
+    static void ensure_model_loaded(const std::string& artifacts_path);
 };
 
 #endif // PIPELINE_MANAGER_H

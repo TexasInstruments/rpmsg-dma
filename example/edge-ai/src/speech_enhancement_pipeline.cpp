@@ -13,22 +13,6 @@
 #include <stdexcept>
 #include <vector>
 
-namespace {
-
-size_t require_param(const std::map<std::string, std::string>& params,
-                     const char* key, const char* stage)
-{
-    auto it = params.find(key);
-    if (it == params.end())
-        throw PipelineError{std::string{"STFT stage missing required parameter: "} + key +
-                            " (stage: " + stage + ")"};
-    int v = std::stoi(it->second);
-    if (v <= 0)
-        throw PipelineError{std::string{"Parameter must be positive: "} + key};
-    return static_cast<size_t>(v);
-}
-
-} // namespace
 
 PipelineManager::CommandResult run_speech_enhancement_pipeline(
     PipelineManager::State& state,
@@ -37,9 +21,6 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
     bool debug)
 {
     try {
-        if (state.input_type != PipelineManager::InputType::AUDIO_WAV)
-            throw PipelineError{"Unknown input type"};
-
         // Find required stages
         const PipelineManager::PipelineStage* stft_stage_ptr   = nullptr;
         const PipelineManager::PipelineStage* deint_stage_ptr  = nullptr;
@@ -128,16 +109,18 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
         std::cout << "[App]   buf6 (interleave in):      phys=0x" << std::hex << dma_buf6->phys_addr
                   << std::dec << " size=" << dma_buf6->size << std::endl;
 
-        // Overlap-save chunking parameters (sample level)
-        const size_t OVERLAP_FRAMES  = 100;  // frames of overlap between chunks
-        const size_t T_FRAMES        = OVERLAP_FRAMES / 2;  // trim from each edge
-        const size_t HOP_FRAMES      = TOTAL_FRAMES - OVERLAP_FRAMES;
+        // Chunking parameters — overlap-save only if overlap_frames set in JSON
+        const bool   USE_OVERLAP     = state.pipeline_config.overlap_frames > 0;
+        const size_t OVERLAP_FRAMES  = USE_OVERLAP
+                                       ? static_cast<size_t>(state.pipeline_config.overlap_frames)
+                                       : 0;
+        const size_t T_FRAMES        = OVERLAP_FRAMES / 2;
+        const size_t HOP_FRAMES      = USE_OVERLAP ? TOTAL_FRAMES - OVERLAP_FRAMES : TOTAL_FRAMES;
         const size_t T_SAMPLES       = T_FRAMES * HOP_SIZE;
         const size_t HOP_SAMPLES     = HOP_FRAMES * HOP_SIZE;
         const size_t CHUNK_SAMPLES   = TOTAL_FRAMES * HOP_SIZE;
 
-        // Pad audio so last chunk is full TOTAL_FRAMES
-        const size_t n_samples   = audio_data.size();
+        const size_t n_samples = audio_data.size();
         size_t n_chunks;
         if (n_samples <= CHUNK_SAMPLES) {
             n_chunks = 1;
@@ -148,48 +131,49 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
         const size_t padded_len = (n_chunks - 1) * HOP_SAMPLES + CHUNK_SAMPLES;
         audio_data.resize(padded_len, int16_t{0});
 
-        std::cout << "[App] Overlap-save chunking:" << std::endl;
-        std::cout << "[App]   TOTAL_FRAMES=" << TOTAL_FRAMES
-                  << " OVERLAP_FRAMES=" << OVERLAP_FRAMES
-                  << " HOP_FRAMES=" << HOP_FRAMES
-                  << " n_chunks=" << n_chunks << std::endl;
+        if (USE_OVERLAP) {
+            std::cout << "[App] Overlap-save chunking:" << std::endl;
+            std::cout << "[App]   TOTAL_FRAMES=" << TOTAL_FRAMES
+                      << " OVERLAP_FRAMES=" << OVERLAP_FRAMES
+                      << " HOP_FRAMES=" << HOP_FRAMES
+                      << " n_chunks=" << n_chunks << std::endl;
+        } else {
+            std::cout << "[App] Sequential chunking (no overlap):" << std::endl;
+            std::cout << "[App]   TOTAL_FRAMES=" << TOTAL_FRAMES
+                      << " n_chunks=" << n_chunks << std::endl;
+        }
 
-        // Initialize TVM — read input shape from TVM stage parameters
+        // Parse TVM input shape from stage parameters — required, e.g. "1,2,401,161"
+        std::vector<int64_t> tvm_input_shape;
+        if (tvm_stage_ptr) {
+            auto shape_it = tvm_stage_ptr->parameters.find("input_shape");
+            if (shape_it == tvm_stage_ptr->parameters.end())
+                throw PipelineError{"TVM stage missing required parameter: input_shape"};
+            std::istringstream ss(shape_it->second);
+            std::string token;
+            while (std::getline(ss, token, ','))
+                tvm_input_shape.push_back(std::stoll(token));
+        }
+
+        // Initialize TVM
         if (tvm_stage_ptr && state.tvm_artifacts_configured && !tvm_client.is_initialized()) {
             if (!tvm_client.initialize(state.tvm_artifacts_paths[0]))
                 throw PipelineError{"Failed to initialize TVM client"};
-
-            // Parse input_shape from TVM stage parameters e.g. "1,2,401,161"
-            std::vector<int> input_shape;
-            auto shape_it = tvm_stage_ptr->parameters.find("input_shape");
-            if (shape_it != tvm_stage_ptr->parameters.end()) {
-                std::istringstream ss(shape_it->second);
-                std::string token;
-                while (std::getline(ss, token, ','))
-                    input_shape.push_back(std::stoi(token));
-            } else {
-                // Derive from model params as fallback
-                input_shape = {1, 2,
-                    static_cast<int>(TOTAL_FRAMES),
-                    static_cast<int>(MODEL_ELEMS / 2)};
-            }
-            tvm_client.set_input_shape(input_shape);
             std::cout << "[App] TVM initialized, input shape [";
-            for (size_t i = 0; i < input_shape.size(); ++i)
-                std::cout << input_shape[i] << (i + 1 < input_shape.size() ? "," : "");
+            for (size_t i = 0; i < tvm_input_shape.size(); ++i)
+                std::cout << tvm_input_shape[i] << (i + 1 < tvm_input_shape.size() ? "," : "");
             std::cout << "]" << std::endl;
         }
 
         std::vector<int16_t> processed_audio_data;
         processed_audio_data.reserve(n_samples);
 
-        AudioStream audio_stream;
-
         uint64_t stft_out_base  = dma_buf2->phys_addr;
         uint64_t istft_src_base = dma_buf3->phys_addr;
 
         std::vector<float> deint_output_data;
         std::vector<float> inter_input_data;
+        AudioStream audio_stream;
 
         auto t_total_start = std::chrono::steady_clock::now();
 
@@ -200,8 +184,8 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
             const size_t num_batches_chunk    = NUM_BATCHES;
 
             // Trim-reconstruct: which output samples to keep from this chunk
-            const size_t lo_sample = (chunk_idx == 0)           ? 0              : T_SAMPLES;
-            const size_t hi_sample = (chunk_idx == n_chunks - 1) ? CHUNK_SAMPLES  : CHUNK_SAMPLES - T_SAMPLES;
+            const size_t lo_sample = (USE_OVERLAP && chunk_idx > 0)            ? T_SAMPLES     : 0;
+            const size_t hi_sample = (USE_OVERLAP && chunk_idx < n_chunks - 1) ? CHUNK_SAMPLES - T_SAMPLES : CHUNK_SAMPLES;
 
             auto t_chunk_start = std::chrono::steady_clock::now();
 
@@ -211,12 +195,11 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
                 const size_t frames_this_batch  = (batch_idx < NUM_BATCHES - 1) ? BATCH_N : PAD_FRAMES;
                 const size_t samples_this_batch = frames_this_batch * HOP_SIZE;
                 const size_t audio_offset       = chunk_sample_offset + batch_idx * BATCH_N * HOP_SIZE;
-                const size_t audio_bytes        = samples_this_batch * sizeof(int16_t);
                 const uint64_t spectral_offset  = batch_idx * BATCH_N * MODEL_ELEMS * sizeof(float);
 
                 dma_buf1.begin_cpu_access();
                 std::fill_n(dma_buf1.data<std::byte>(), audio_batch_bytes, std::byte{});
-                audio_stream.send_frame(0, dma_buf1.data<std::byte>(), audio_bytes);
+                audio_stream.send_frame(0, dma_buf1.data<std::byte>(), samples_this_batch * sizeof(int16_t));
                 if (audio_offset < audio_data.size()) {
                     const size_t available = std::min(samples_this_batch,
                                                       audio_data.size() - audio_offset);
@@ -272,7 +255,7 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
             dma_buf5.end_cpu_access();
 
             if (tvm_client.is_initialized()) {
-                if (!tvm_client.run_inference(deint_output_data, inter_input_data))
+                if (!tvm_client.run_inference(deint_output_data, inter_input_data, tvm_input_shape))
                     throw PipelineError{"TVM inference failed"};
                 t_tvm_ms = std::chrono::duration_cast<std::chrono::microseconds>(
                     std::chrono::steady_clock::now() - t_tvm_start).count() / 1000.0;

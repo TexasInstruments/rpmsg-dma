@@ -27,15 +27,6 @@ private:
 
     bool initialized_;
 
-    // Input/output data
-    std::vector<float> input_data_;
-    std::vector<float> output_data_;
-
-    // Model info
-    std::string input_name_;
-    std::vector<int> input_shape_;
-    int dma_input_fd_{-1};
-    int dma_output_fd_{-1};
 
     // Daemon client state
     int  daemon_fd_{-1};       /* Unix socket fd when using daemon; -1 = local mode */
@@ -50,39 +41,32 @@ public:
     void cleanup();
 
     // Inference
-    bool run_inference(const std::vector<float>& input_data,
-                       std::vector<float>& output_data);
-    bool run_inference(const std::vector<float>& input_data,
-                       std::vector<float>& output_data,
-                       const std::vector<int64_t>& input_shape);
-    bool run_inference(const float* input, float* output, size_t count);
-    bool run_inference(std::vector<float>& dint_data, std::vector<float>& inter_data, size_t data_size);
-    bool run_inference(const std::string& bin_path);
+    bool run_inference(const std::vector<float>& input,
+                       std::vector<float>& output,
+                       const std::vector<int64_t>& shape);
 
     // Status
     bool is_initialized() const { return initialized_; }
-    const std::vector<float>& get_output() const { return output_data_; }
-    const std::vector<int>& get_input_shape() const { return input_shape_; }
-    void set_input_shape(const std::vector<int>& shape) { input_shape_ = shape; }
-    void set_input_name(const std::string& name) { input_name_ = name; }
-    void set_input_dma_fd(int fd) noexcept { dma_input_fd_ = fd; }
-    void set_output_dma_fd(int fd) noexcept { dma_output_fd_ = fd; }
 
     /* Prevent daemon auto-connect — must be called before initialize().
      * Used by tvm_model_daemon to avoid recursion into itself. */
     void disable_daemon() noexcept { daemon_skip_ = true; }
     bool is_daemon_mode() const noexcept { return daemon_fd_ >= 0; }
 
+    /* Request the running daemon to hot-reload a different model.
+     * Opens a one-shot connection — no root or systemctl required.
+     * Returns true when the daemon confirms the new model is loaded.
+     * Returns false if the daemon is unreachable or rejects the path. */
+    static bool switch_model(const std::string& artifacts_path);
+
 private:
     // Helper methods
     bool load_artifacts();
-    void process_output_data();
-    bool synchronize_dma_buffer(int fd, int operation) const noexcept;
     std::string load_json_file(const std::string& path);
 
     // Daemon client helpers
     bool try_daemon_connect();
-    bool run_via_daemon(const float* input, float* output, size_t count);
+    bool run_via_daemon(const float* input, size_t count, std::vector<float>& output);
 };
 
 #endif // TVM_INFERENCE_CLIENT_H

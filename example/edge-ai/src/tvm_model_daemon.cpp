@@ -28,10 +28,10 @@
 #include <string>
 #include <vector>
 
-static constexpr const char* DEFAULT_ARTIFACTS = "/usr/share/tvm_inference/artifacts/";
+static constexpr const char* DEFAULT_ARTIFACTS = "/usr/share/tvm_inference/artifacts/gcrn";
 
 static constexpr const char* C7X_FW_LINK      = "/lib/firmware/am62d-c71_0-fw";
-static constexpr const char* C7X_FW_TARGET    = "/lib/firmware/ti-ipc/am62dxx/dsp_edgeai.c75ss0-0.release.strip.out";
+static constexpr const char* C7X_FW_TARGET    = "/lib/firmware/ti-ipc/am62dxx/dsp_edgeai_c7x_1_release_strip.out";
 static constexpr const char* RPROC_STATE      = "/sys/class/remoteproc/remoteproc0/state";
 static constexpr int         BOOT_TIMEOUT_S   = 60;
 static constexpr int         STOP_TIMEOUT_S   = 1;
@@ -123,6 +123,33 @@ static bool wait_for_c7x() {
     return false;
 }
 
+static constexpr const char* MODEL_CACHE_FILE = "/var/lib/tvm_inference/loaded_model";
+
+static std::string read_model_cache() {
+    int fd = ::open(MODEL_CACHE_FILE, O_RDONLY);
+    if (fd < 0) return {};
+    char buf[512] = {};
+    ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
+    ::close(fd);
+    if (n <= 0) return {};
+    std::string s(buf, static_cast<size_t>(n));
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.pop_back();
+    return s;
+}
+
+static void write_model_cache(const std::string& path) {
+    int fd = ::open(MODEL_CACHE_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        std::cerr << "[daemon] Warning: cannot write model cache: "
+                  << MODEL_CACHE_FILE << '\n';
+        return;
+    }
+    ssize_t n1 = ::write(fd, path.data(), path.size());
+    ssize_t n2 = ::write(fd, "\n", 1);
+    (void)(n1 + n2);
+    ::close(fd);
+}
+
 namespace {
 
 volatile sig_atomic_t g_running  = 1;
@@ -175,6 +202,32 @@ void handle_client(int cfd, TvmInferenceClient& tvm) {
             continue;
         }
 
+        if (hdr.type == static_cast<uint32_t>(TvmDaemon::MsgType::LOAD_MODEL)) {
+            if (hdr.len == 0 || hdr.len > 4095) {
+                const std::string err = "LOAD_MODEL: invalid path length";
+                send_hdr(cfd, TvmDaemon::MsgType::ERROR_RESP,
+                         static_cast<uint32_t>(err.size()));
+                write_all(cfd, err.data(), err.size());
+                continue;
+            }
+            std::string new_path(hdr.len, '\0');
+            if (!read_all(cfd, new_path.data(), hdr.len)) break;
+
+            std::cout << "[daemon] LOAD_MODEL: " << new_path << '\n';
+            if (tvm.initialize(new_path)) {
+                write_model_cache(new_path);
+                send_hdr(cfd, TvmDaemon::MsgType::LOAD_RESP, 0);
+                std::cout << "[daemon] Model loaded: " << new_path << '\n';
+            } else {
+                const std::string err = "failed to load model: " + new_path;
+                send_hdr(cfd, TvmDaemon::MsgType::ERROR_RESP,
+                         static_cast<uint32_t>(err.size()));
+                write_all(cfd, err.data(), err.size());
+                std::cerr << "[daemon] " << err << '\n';
+            }
+            continue;
+        }
+
         if (hdr.type != static_cast<uint32_t>(TvmDaemon::MsgType::INFER_REQ) ||
             hdr.len == 0 || hdr.len % sizeof(float) != 0) {
             const std::string err = "unexpected message type or bad payload size";
@@ -193,7 +246,8 @@ void handle_client(int cfd, TvmInferenceClient& tvm) {
         }
 
         const auto t0 = std::chrono::steady_clock::now();
-        const bool ok = tvm.run_inference(input, output);
+        const bool ok = tvm.run_inference(input, output,
+            std::vector<int64_t>{static_cast<int64_t>(n_floats)});
         const double ms = std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::steady_clock::now() - t0).count() / 1000.0;
 
@@ -221,11 +275,14 @@ void handle_client(int cfd, TvmInferenceClient& tvm) {
 } // namespace
 
 int main(int argc, char* argv[]) {
-    std::string artifacts = DEFAULT_ARTIFACTS;
+    // Priority: --artifacts arg > cache file > hardcoded default
+    std::string artifacts;
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--artifacts" && i + 1 < argc)
             artifacts = argv[++i];
     }
+    if (artifacts.empty()) artifacts = read_model_cache();
+    if (artifacts.empty()) artifacts = DEFAULT_ARTIFACTS;
 
     std::cout << "[daemon] Loading TVM artifacts from: " << artifacts << '\n';
 
@@ -236,7 +293,6 @@ int main(int argc, char* argv[]) {
 
     TvmInferenceClient tvm;
     tvm.disable_daemon();               /* must not try to connect to itself */
-    tvm.set_input_shape({1, 2, 401, 161});
 
     if (!tvm.initialize(artifacts)) {
         std::cerr << "[daemon] Failed to load model — aborting\n";

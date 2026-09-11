@@ -30,10 +30,10 @@ set(EDGE_AI_SOURCES
     src/pipeline_manager.cpp
     src/pipeline_common.cpp
     src/audio_utils.cpp
+    src/speech_enhancement_pipeline.cpp
+    src/audio_classification_pipeline.cpp
     src/tvm_pipeline.cpp
     src/stft_istft_pipeline.cpp
-    src/speech_enhancement_pipeline.cpp
-    src/speech_classification_pipeline.cpp
 )
 
 # Create the executable
@@ -82,12 +82,16 @@ target_include_directories(rpmsg_inference_example PRIVATE ${JSON_C_INCLUDE_DIRS
 # Find audio libraries for WAV file processing
 find_library(SNDFILE_LIB sndfile REQUIRED)
 
+# Find ALSA for live PCM capture via --device
+find_library(ALSA_LIB asound REQUIRED)
+
 # Link with required libraries
 target_link_libraries(rpmsg_inference_example
     ${TVM_RUNTIME_LIB}
     ti_rpmsg_dma
     ${JSON_C_LIBRARIES}
     ${SNDFILE_LIB}
+    ${ALSA_LIB}
     pthread
     dl
 )
@@ -130,12 +134,22 @@ install(FILES
 ${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_stft_istft.json
 ${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_tvm_inference.json
 ${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_speech_enhancement.json
-${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_speech_classification.json
+${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_audio_classification_yamnet.json
+${CMAKE_CURRENT_SOURCE_DIR}/json_files/pipeline_audio_classification_vggish.json
 DESTINATION ${CMAKE_INSTALL_DATADIR}/tvm_inference/json)
+
+# Install class label files to /usr/share/tvm_inference/labels/
+install(FILES
+${CMAKE_CURRENT_SOURCE_DIR}/labels/yamnet_label_list.txt
+${CMAKE_CURRENT_SOURCE_DIR}/labels/vggish_label_list.txt
+DESTINATION ${CMAKE_INSTALL_DATADIR}/tvm_inference/labels)
 
 # Install input files to /usr/share/tvm_inference/input/
 install(FILES
     ${CMAKE_CURRENT_SOURCE_DIR}/input_audio/input_audio.wav
+    ${CMAKE_CURRENT_SOURCE_DIR}/input_audio/speech_whistling2.wav
+    ${CMAKE_CURRENT_SOURCE_DIR}/input_audio/miaow_16k.wav
+    ${CMAKE_CURRENT_SOURCE_DIR}/input_audio/urbansound_16k.wav
     ${CMAKE_CURRENT_SOURCE_DIR}/artifacts_bin/gcrn_fixed_input.bin
     DESTINATION ${CMAKE_INSTALL_DATADIR}/tvm_inference/input)
 

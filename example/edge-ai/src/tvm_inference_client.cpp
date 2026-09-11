@@ -22,10 +22,6 @@
 #include <tvm/runtime/ndarray.h>
 #include <tvm/runtime/container/map.h>
 
-extern "C" {
-#include "dmabuf.h"
-}
-
 using namespace tvm::runtime;
 
 namespace {
@@ -69,9 +65,6 @@ size_t tensor_element_count(const Tensor* tensor)
 
 } // namespace
 
-bool TvmInferenceClient::synchronize_dma_buffer(int fd, int operation) const noexcept {
-    return fd < 0 || dmabuf_sync(fd, operation) == 0;
-}
 
 TvmInferenceClient::TvmInferenceClient() : initialized_(false) {
 }
@@ -140,7 +133,61 @@ bool TvmInferenceClient::try_daemon_connect() {
     return true;
 }
 
-bool TvmInferenceClient::run_via_daemon(const float* input, float* output, size_t count) {
+bool TvmInferenceClient::switch_model(const std::string& artifacts_path) {
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return false;
+
+    sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, TvmDaemon::SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(fd);
+        return false;
+    }
+
+    /* PING/PONG handshake — confirms daemon is alive before sending LOAD_MODEL */
+    TvmDaemon::Header ping{TvmDaemon::MAGIC,
+                           static_cast<uint32_t>(TvmDaemon::MsgType::PING), 0};
+    TvmDaemon::Header pong{};
+    if (!sock_write_all(fd, &ping, sizeof(ping)) ||
+        !sock_read_all(fd, &pong, sizeof(pong)) ||
+        pong.magic != TvmDaemon::MAGIC ||
+        pong.type  != static_cast<uint32_t>(TvmDaemon::MsgType::PONG)) {
+        ::close(fd);
+        return false;
+    }
+
+    /* Send LOAD_MODEL */
+    const uint32_t path_len = static_cast<uint32_t>(artifacts_path.size());
+    TvmDaemon::Header req{TvmDaemon::MAGIC,
+                          static_cast<uint32_t>(TvmDaemon::MsgType::LOAD_MODEL),
+                          path_len};
+    if (!sock_write_all(fd, &req, sizeof(req)) ||
+        !sock_write_all(fd, artifacts_path.data(), path_len)) {
+        ::close(fd);
+        return false;
+    }
+
+    /* Wait for LOAD_RESP or ERROR_RESP */
+    TvmDaemon::Header resp{};
+    bool success = false;
+    if (sock_read_all(fd, &resp, sizeof(resp)) && resp.magic == TvmDaemon::MAGIC) {
+        if (resp.type == static_cast<uint32_t>(TvmDaemon::MsgType::LOAD_RESP)) {
+            success = true;
+        } else if (resp.type == static_cast<uint32_t>(TvmDaemon::MsgType::ERROR_RESP) &&
+                   resp.len > 0) {
+            std::vector<char> msg(resp.len + 1, '\0');
+            sock_read_all(fd, msg.data(), resp.len);
+            std::cerr << "[TVM] switch_model error: " << msg.data() << '\n';
+        }
+    }
+
+    ::close(fd);
+    return success;
+}
+
+bool TvmInferenceClient::run_via_daemon(const float* input, size_t count, std::vector<float>& output) {
     const uint32_t in_bytes = static_cast<uint32_t>(count * sizeof(float));
     TvmDaemon::Header req{TvmDaemon::MAGIC,
                           static_cast<uint32_t>(TvmDaemon::MsgType::INFER_REQ),
@@ -172,13 +219,8 @@ bool TvmInferenceClient::run_via_daemon(const float* input, float* output, size_
     }
 
     const size_t out_floats = resp.len / sizeof(float);
-    if (out_floats > count) {
-        std::cerr << "[TVM] Daemon: output too large (" << out_floats
-                  << " > " << count << ")\n";
-        return false;
-    }
-
-    if (!sock_read_all(daemon_fd_, output, resp.len)) {
+    output.resize(out_floats);
+    if (!sock_read_all(daemon_fd_, output.data(), resp.len)) {
         std::cerr << "[TVM] Daemon: failed to read output\n";
         return false;
     }
@@ -192,8 +234,6 @@ void TvmInferenceClient::cleanup() {
     run_.reset();
     set_input_.reset();
     graph_executor_.reset();
-    input_data_.clear();
-    output_data_.clear();
     initialized_ = false;
 }
 
@@ -285,22 +325,6 @@ bool TvmInferenceClient::load_artifacts() {
     return true;
 }
 
-void TvmInferenceClient::process_output_data() {
-    NDArray output_array = (*get_output_)(0);
-    const size_t output_size = tensor_element_count(output_array.operator->());
-    output_data_.resize(output_size);
-    output_array.CopyToBytes(output_data_.data(), output_size * sizeof(float));
-}
-
-bool TvmInferenceClient::run_inference(const std::vector<float>& input_data,
-                                       std::vector<float>& output_data) {
-    std::vector<int64_t> shape;
-    if (input_shape_.empty())
-        shape = {static_cast<int64_t>(input_data.size())};
-    else
-        shape.assign(input_shape_.begin(), input_shape_.end());
-    return run_inference(input_data, output_data, shape);
-}
 
 bool TvmInferenceClient::run_inference(const std::vector<float>& input_data,
                                        std::vector<float>& output_data,
@@ -315,8 +339,7 @@ bool TvmInferenceClient::run_inference(const std::vector<float>& input_data,
     }
 
     if (daemon_fd_ >= 0) {
-        output_data.resize(input_data.size());
-        return run_via_daemon(input_data.data(), output_data.data(), input_data.size());
+        return run_via_daemon(input_data.data(), input_data.size(), output_data);
     }
 
     try {
@@ -333,15 +356,9 @@ bool TvmInferenceClient::run_inference(const std::vector<float>& input_data,
 
         const auto start = std::chrono::steady_clock::now();
 
-        if (!synchronize_dma_buffer(dma_input_fd_, DMA_BUF_SYNC_START))
-            throw std::runtime_error{"Failed to sync input DMA buffer for CPU access"};
-
         NDArray input_array = NDArray::Empty(input_shape, DLDataType{kDLFloat, 32, 1}, {kDLCPU, 0});
         input_array.CopyFromBytes(input_data.data(), input_data.size() * sizeof(float));
-        if (input_name_.empty())
-            (*set_input_)(0, input_array);
-        else
-            (*set_input_)(String{input_name_}, input_array);
+        (*set_input_)(0, input_array);
         (*run_)();
 
         NDArray out = (*get_output_)(0);
@@ -349,9 +366,6 @@ bool TvmInferenceClient::run_inference(const std::vector<float>& input_data,
         output_data.resize(output_elements);
         out.CopyToBytes(output_data.data(), output_elements * sizeof(float));
 
-        if (!synchronize_dma_buffer(dma_output_fd_, DMA_BUF_SYNC_END))
-            throw std::runtime_error{"Failed to complete DMA buffer cache synchronization"};
-
         const auto end = std::chrono::steady_clock::now();
         double ms = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
 
@@ -365,129 +379,4 @@ bool TvmInferenceClient::run_inference(const std::vector<float>& input_data,
     }
 }
 
-bool TvmInferenceClient::run_inference(const float* input, float* output, size_t count) {
-    if (!initialized_) {
-        std::cerr << "[TVM] Not initialized" << std::endl;
-        return false;
-    }
-    if (!input || count == 0 || !output) {
-        std::cerr << "[TVM] Invalid input/output pointer or count" << std::endl;
-        return false;
-    }
 
-    /* Daemon mode — send over socket instead of running TVM locally */
-    if (daemon_fd_ >= 0) {
-        const auto t0 = std::chrono::steady_clock::now();
-        const bool ok = run_via_daemon(input, output, count);
-        const double ms = std::chrono::duration_cast<std::chrono::microseconds>(
-            std::chrono::steady_clock::now() - t0).count() / 1000.0;
-        if (ok) std::cout << "[TVM] Daemon inference done in " << ms
-                          << " ms, " << count << " floats\n";
-        return ok;
-    }
-
-    std::vector<int64_t> shape;
-    if (input_shape_.empty())
-        shape = {static_cast<int64_t>(count)};
-    else
-        shape.assign(input_shape_.begin(), input_shape_.end());
-
-    try {
-        const size_t shape_elements = std::accumulate(
-            shape.begin(), shape.end(), size_t{1},
-            [](size_t total, int64_t extent) {
-                if (extent <= 0 || total > std::numeric_limits<size_t>::max() /
-                                             static_cast<size_t>(extent))
-                    throw std::overflow_error{"Invalid TVM input shape"};
-                return total * static_cast<size_t>(extent);
-            });
-        if (shape_elements != count)
-            throw std::runtime_error{"TVM input shape does not match the input count"};
-
-        const auto start = std::chrono::steady_clock::now();
-
-        if (!synchronize_dma_buffer(dma_input_fd_, DMA_BUF_SYNC_START))
-            throw std::runtime_error{"Failed to sync input DMA buffer for CPU access"};
-
-        NDArray input_array = NDArray::Empty(shape, DLDataType{kDLFloat, 32, 1}, {kDLCPU, 0});
-        input_array.CopyFromBytes(input, count * sizeof(float));
-        if (input_name_.empty())
-            (*set_input_)(0, input_array);
-        else
-            (*set_input_)(String{input_name_}, input_array);
-
-        if (!synchronize_dma_buffer(dma_input_fd_, DMA_BUF_SYNC_END))
-            throw std::runtime_error{"Failed to end input DMA buffer sync"};
-
-        (*run_)();
-
-        if (!synchronize_dma_buffer(dma_output_fd_, DMA_BUF_SYNC_START))
-            throw std::runtime_error{"Failed to sync output DMA buffer for CPU access"};
-
-        NDArray out = (*get_output_)(0);
-        const size_t output_elements = tensor_element_count(out.operator->());
-        if (output_elements > count)
-            throw std::runtime_error{"Output buffer too small: need " +
-                                     std::to_string(output_elements) + " floats, got " +
-                                     std::to_string(count)};
-        out.CopyToBytes(output, output_elements * sizeof(float));
-
-        if (!synchronize_dma_buffer(dma_output_fd_, DMA_BUF_SYNC_END))
-            throw std::runtime_error{"Failed to complete output DMA buffer sync"};
-
-        const auto end = std::chrono::steady_clock::now();
-        double ms = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-
-        std::cout << "[TVM] Inference done in " << ms << " ms, output: "
-                  << output_elements << " floats" << std::endl;
-        return true;
-
-    } catch (const std::exception& e) {
-        std::cerr << "[TVM] Inference failed: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool TvmInferenceClient::run_inference(std::vector<float>& input_data,
-                                       std::vector<float>& output_data,
-                                       size_t input_bytes) {
-    if (input_bytes != input_data.size() * sizeof(float)) {
-        std::cerr << "[TVM] Legacy input byte count does not match input data" << std::endl;
-        return false;
-    }
-    return run_inference(static_cast<const std::vector<float>&>(input_data), output_data);
-}
-
-bool TvmInferenceClient::run_inference(const std::string& bin_path) {
-    if (!initialized_) {
-        std::cerr << "[TVM] Not initialized" << std::endl;
-        return false;
-    }
-
-    std::ifstream f(bin_path, std::ios::binary | std::ios::ate);
-    if (!f.is_open()) {
-        std::cerr << "[TVM] Cannot open: " << bin_path << std::endl;
-        return false;
-    }
-    const auto end_position = f.tellg();
-    if (end_position <= 0 ||
-        end_position % static_cast<std::streamoff>(sizeof(float)) != 0) {
-        std::cerr << "[TVM] Input must be a non-empty float32 tensor" << std::endl;
-        return false;
-    }
-    const auto file_bytes = static_cast<size_t>(end_position);
-    f.seekg(0, std::ios::beg);
-
-    const size_t num_floats = file_bytes / sizeof(float);
-    input_data_.resize(num_floats);
-    if (!f.read(reinterpret_cast<char*>(input_data_.data()),
-                static_cast<std::streamsize>(file_bytes))) {
-        std::cerr << "[TVM] Failed to read complete input tensor" << std::endl;
-        return false;
-    }
-
-    std::cout << "[TVM] Loaded " << num_floats << " floats from " << bin_path << std::endl;
-
-    return run_inference(input_data_, output_data_,
-                         std::vector<int64_t>{static_cast<int64_t>(num_floats)});
-}

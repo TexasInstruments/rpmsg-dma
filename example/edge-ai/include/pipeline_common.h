@@ -1,21 +1,21 @@
 #ifndef PIPELINE_COMMON_H
 #define PIPELINE_COMMON_H
 
-#include <array>
-#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <array>
+#include <cerrno>
 
 extern "C" {
 #include "dmabuf.h"
-#include "fw_loader.h"
 }
 
 class PipelineError : public std::runtime_error {
@@ -24,6 +24,9 @@ public:
 };
 
 std::string hex_address(uint64_t address);
+
+size_t require_param(const std::map<std::string, std::string>& params,
+                     const char* key, const char* stage);
 
 class DmaBuffer {
 public:

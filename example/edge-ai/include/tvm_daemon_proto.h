@@ -3,12 +3,19 @@
  *
  * Layout (all fields native-endian / little-endian on ARM):
  *
- *   Client → Daemon:  Header{MAGIC, PING,      0}
- *   Daemon → Client:  Header{MAGIC, PONG,      0}
+ *   Client → Daemon:  Header{MAGIC, PING,       0}
+ *   Daemon → Client:  Header{MAGIC, PONG,       0}
  *
- *   Client → Daemon:  Header{MAGIC, INFER_REQ, n_bytes} + n_bytes of float32 input
+ *   Client → Daemon:  Header{MAGIC, INFER_REQ,  n_bytes} + n_bytes of float32 input
  *   Daemon → Client:  Header{MAGIC, INFER_RESP, n_bytes} + n_bytes of float32 output
  *   Daemon → Client:  Header{MAGIC, ERROR_RESP, n_bytes} + n_bytes of UTF-8 error string
+ *
+ *   Client → Daemon:  Header{MAGIC, LOAD_MODEL, n_bytes} + n_bytes of UTF-8 artifacts path
+ *   Daemon → Client:  Header{MAGIC, LOAD_RESP,  0}        (success)
+ *   Daemon → Client:  Header{MAGIC, ERROR_RESP, n_bytes} + n_bytes of UTF-8 error string (failure)
+ *
+ * LOAD_MODEL hot-reloads the TVM model inside the running daemon — no daemon restart or
+ * root privileges required.  Any process that can reach the socket may issue LOAD_MODEL.
  */
 
 #pragma once
@@ -26,6 +33,8 @@ enum class MsgType : uint32_t {
     INFER_REQ  = 2,
     INFER_RESP = 3,
     ERROR_RESP = 4,
+    LOAD_MODEL = 5,  /* client → daemon: request hot-reload of artifacts at given path */
+    LOAD_RESP  = 6,  /* daemon → client: model loaded successfully (len=0) */
 };
 
 struct Header {

@@ -33,6 +33,19 @@ void DmaBuffer::sync(int operation) const
         throw PipelineError{"DMA buffer synchronization failed"};
 }
 
+size_t require_param(const std::map<std::string, std::string>& params,
+                     const char* key, const char* stage)
+{
+    auto it = params.find(key);
+    if (it == params.end())
+        throw PipelineError{std::string{"Stage missing required parameter: "} + key +
+                            " (stage: " + stage + ")"};
+    int v = std::stoi(it->second);
+    if (v <= 0)
+        throw PipelineError{std::string{"Parameter must be positive: "} + key};
+    return static_cast<size_t>(v);
+}
+
 AudioStream::AudioStream() noexcept { open(); }
 
 AudioStream::~AudioStream()

@@ -1,10 +1,11 @@
 #include "pipeline_manager.h"
 #include "pipeline_common.h"
 #include "audio_utils.h"
+#include "speech_enhancement_pipeline.h"
+#include "audio_classification_pipeline.h"
 #include "tvm_pipeline.h"
 #include "stft_istft_pipeline.h"
-#include "speech_enhancement_pipeline.h"
-#include "speech_classification_pipeline.h"
+#include <unistd.h>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -39,6 +40,30 @@ bool PipelineManager::write_model_cache(const std::string& artifacts_path)
     return true;
 }
 
+// ─── Daemon model-switch helper ───────────────────────────────────────────────
+
+void PipelineManager::ensure_model_loaded(const std::string& path)
+{
+    const std::string cached = read_model_cache();
+    if (cached == path) {
+        std::cout << "[App] Model already loaded: " << path << ", skipping reload." << std::endl;
+        return;
+    }
+    std::cout << "[App] Model changed (" << cached << " -> " << path
+              << "), requesting daemon reload..." << std::endl;
+
+    if (TvmInferenceClient::switch_model(path)) {
+        /* Cache updated by the daemon; mirror it here for consistency. */
+        write_model_cache(path);
+        std::cout << "[App] Daemon reloaded model: " << path << std::endl;
+        return;
+    }
+
+    /* Daemon unreachable — persist the path so it loads the right model on next start. */
+    std::cerr << "[App] Warning: daemon not reachable; caching model path for boot-time load\n";
+    write_model_cache(path);
+}
+
 // ─── Preload default model at boot ────────────────────────────────────────────
 
 int PipelineManager::preload_default_model()
@@ -55,15 +80,15 @@ int PipelineManager::preload_default_model()
         return 0;
     }
 
+    // Write cache so daemon loads correct artifacts on next restart
+    if (!write_model_cache(artifacts))
+        std::cerr << "[App] Warning: cannot write model cache: " << MODEL_CACHE_FILE << std::endl;
+
     tvm_client_ = std::make_shared<TvmInferenceClient>();
     if (!tvm_client_->initialize(artifacts)) {
         std::cerr << "[App] Failed to load default model from: " << artifacts << std::endl;
         return -1;
     }
-    tvm_client_->set_input_shape({1, 2, 401, 161});
-
-    if (!write_model_cache(artifacts))
-        std::cerr << "[App] Warning: model loaded but cache write failed" << std::endl;
 
     std::cout << "[App] Default model loaded and cached." << std::endl;
     return 0;
@@ -74,7 +99,6 @@ int PipelineManager::preload_default_model()
 PipelineManager::PipelineManager()
     : initialized_(false)
 {
-    state_.artifacts_loaded = false;
     state_.tvm_artifacts_configured = false;
     state_.input_configured = false;
 }
@@ -126,7 +150,13 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
         state_.tvm_artifacts_paths = {path};
         state_.tvm_artifacts_configured = true;
         std::cout << "[App] TVM artifacts configured: " << path << std::endl;
+
+        ensure_model_loaded(path);
     }
+
+    // Apply --input-file override before validation
+    if (!input_file_override_.empty())
+        state_.pipeline_config.input_file = input_file_override_;
 
     // Configure input file
     if (state_.pipeline_config.input_file.empty()) {
@@ -139,13 +169,14 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
         return -1;
     }
     const auto extension = std::filesystem::path{input_file}.extension();
-    if (extension == ".wav")
+    if (extension == ".wav") {
         state_.input_type = InputType::AUDIO_WAV;
-    else if (extension == ".bin")
+    } else if (extension == ".bin") {
         state_.input_type = InputType::TENSOR_BIN;
-    else {
-        std::cout << "[App] Warning: Unknown input type for file: " << input_file << std::endl;
-        state_.input_type = InputType::UNKNOWN;
+    } else {
+        std::cout << "[App] Error: Unsupported input file extension: " << extension
+                  << " (expected .wav or .bin)" << std::endl;
+        return -1;
     }
     state_.current_input_file = input_file;
     state_.input_configured = true;
@@ -154,23 +185,159 @@ int PipelineManager::run_from_json_file(const std::string& json_file_path)
     if (!validateConfiguration())
         return -1;
 
-    std::cout << "[App] Stages: " << state_.pipeline_config.stages.size() << std::endl;
-
     const auto& pipeline_type = state_.pipeline_config.pipeline_type;
+
+    // Validate input type per pipeline
+    if (pipeline_type == "tvm_only") {
+        if (state_.input_type != InputType::TENSOR_BIN) {
+            std::cout << "[App] Error: tvm_only pipeline requires a .bin input file" << std::endl;
+            return -1;
+        }
+    } else if (pipeline_type == "speech_enhancement" ||
+               pipeline_type == "stft_istft" ||
+               pipeline_type == "audio_classification") {
+        if (state_.input_type != InputType::AUDIO_WAV) {
+            std::cout << "[App] Error: " << pipeline_type
+                      << " pipeline requires a .wav input file" << std::endl;
+            return -1;
+        }
+    }
+
+
+    std::cout << "[App] Stages: " << state_.pipeline_config.stages.size() << std::endl;
     CommandResult result;
 
-    if (pipeline_type == "tvm_only") {
-        result = run_tvm_pipeline(state_, *tvm_client_);
-    } else if (pipeline_type == "speech_enhancement") {
+    if (pipeline_type == "speech_enhancement") {
         result = run_speech_enhancement_pipeline(state_, *generic_client_, *tvm_client_, debug_);
+    } else if (pipeline_type == "audio_classification") {
+        result = run_audio_classification_pipeline(state_, *generic_client_, *tvm_client_, debug_);
+    } else if (pipeline_type == "tvm_only") {
+        result = run_tvm_pipeline(state_, *tvm_client_);
     } else if (pipeline_type == "stft_istft") {
         result = run_stft_istft_pipeline(state_, *generic_client_, debug_);
-    } else if (pipeline_type == "speech_classification") {
-        result = run_speech_classification_pipeline(state_, *generic_client_, debug_);
     } else {
         std::cout << "[App] Error: Unknown pipeline_type: " << pipeline_type << std::endl;
         return -1;
     }
+
+    return (result == CommandResult::SUCCESS) ? 0 : 1;
+}
+
+int PipelineManager::run_from_json_file_stream(const std::string& json_file_path)
+{
+    if (!initialize()) {
+        std::cout << "[App] Failed to initialize application" << std::endl;
+        return -1;
+    }
+
+    std::ifstream file(json_file_path);
+    if (!file.is_open()) {
+        std::cout << "[App] Error: JSON file not found: " << json_file_path << std::endl;
+        return -1;
+    }
+
+    std::string json_content((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    if (!loadPipelineFromJson(json_content)) {
+        std::cout << "[App] Error: Failed to parse pipeline configuration" << std::endl;
+        return -1;
+    }
+
+    state_.current_pipeline_file = json_file_path;
+
+    std::cout << "[App] Pipeline type: " << state_.pipeline_config.pipeline_type << std::endl;
+    std::cout << "[App] Description: "   << state_.pipeline_config.description   << std::endl;
+
+    if (state_.pipeline_config.pipeline_type != "audio_classification") {
+        std::cout << "[App] Error: --stream only supported for audio_classification pipelines" << std::endl;
+        return -1;
+    }
+
+    if (!state_.pipeline_config.artifacts_path.empty()) {
+        const std::string& path = state_.pipeline_config.artifacts_path;
+        if (!std::filesystem::exists(path)) {
+            std::cout << "[App] Error: Artifacts path not found: " << path << std::endl;
+            return -1;
+        }
+        state_.tvm_artifacts_paths = {path};
+        state_.tvm_artifacts_configured = true;
+        std::cout << "[App] TVM artifacts configured: " << path << std::endl;
+
+        ensure_model_loaded(path);
+    }
+
+    bool has_tvm = false;
+    for (const auto& stage : state_.pipeline_config.stages)
+        if (stage.service == "tvm") { has_tvm = true; break; }
+    if (has_tvm && !state_.tvm_artifacts_configured) {
+        std::cout << "[App] Error: Pipeline has TVM stages but no TVM artifacts configured" << std::endl;
+        return -1;
+    }
+
+    std::cout << "[App] Stages: " << state_.pipeline_config.stages.size() << std::endl;
+
+    const CommandResult result = run_audio_classification_pipeline_stream(
+        state_, *generic_client_, *tvm_client_, debug_);
+
+    return (result == CommandResult::SUCCESS) ? 0 : 1;
+}
+
+int PipelineManager::run_from_device_stream(const std::string& json_file_path,
+                                            const std::string& alsa_device)
+{
+    if (!initialize()) {
+        std::cout << "[App] Failed to initialize application" << std::endl;
+        return -1;
+    }
+
+    std::ifstream file(json_file_path);
+    if (!file.is_open()) {
+        std::cout << "[App] Error: JSON file not found: " << json_file_path << std::endl;
+        return -1;
+    }
+
+    std::string json_content((std::istreambuf_iterator<char>(file)),
+                             std::istreambuf_iterator<char>());
+    if (!loadPipelineFromJson(json_content)) {
+        std::cout << "[App] Error: Failed to parse pipeline configuration" << std::endl;
+        return -1;
+    }
+
+    state_.current_pipeline_file = json_file_path;
+
+    std::cout << "[App] Pipeline type: " << state_.pipeline_config.pipeline_type << std::endl;
+    std::cout << "[App] Description: "   << state_.pipeline_config.description   << std::endl;
+
+    if (state_.pipeline_config.pipeline_type != "audio_classification") {
+        std::cout << "[App] Error: --device only supported for audio_classification pipelines" << std::endl;
+        return -1;
+    }
+
+    if (!state_.pipeline_config.artifacts_path.empty()) {
+        const std::string& path = state_.pipeline_config.artifacts_path;
+        if (!std::filesystem::exists(path)) {
+            std::cout << "[App] Error: Artifacts path not found: " << path << std::endl;
+            return -1;
+        }
+        state_.tvm_artifacts_paths = {path};
+        state_.tvm_artifacts_configured = true;
+        std::cout << "[App] TVM artifacts configured: " << path << std::endl;
+
+        ensure_model_loaded(path);
+    }
+
+    bool has_tvm = false;
+    for (const auto& stage : state_.pipeline_config.stages)
+        if (stage.service == "tvm") { has_tvm = true; break; }
+    if (has_tvm && !state_.tvm_artifacts_configured) {
+        std::cout << "[App] Error: Pipeline has TVM stages but no TVM artifacts configured" << std::endl;
+        return -1;
+    }
+
+    std::cout << "[App] Stages: " << state_.pipeline_config.stages.size() << std::endl;
+
+    const CommandResult result = run_audio_classification_pipeline_alsa(
+        state_, *generic_client_, *tvm_client_, debug_, alsa_device);
 
     return (result == CommandResult::SUCCESS) ? 0 : 1;
 }
@@ -198,10 +365,27 @@ bool PipelineManager::loadPipelineFromJson(const std::string& json_content)
     PipelineConfig config;
     if (!read_string(root.get(), "pipeline_type", config.pipeline_type, true) ||
         !read_string(root.get(), "description",   config.description,   false) ||
-        !read_string(root.get(), "input_file",    config.input_file,    true) ||
-        !read_string(root.get(), "artifacts_path",config.artifacts_path, false)) {
+        !read_string(root.get(), "input_file",    config.input_file,    false) ||
+        !read_string(root.get(), "artifacts_path",config.artifacts_path, false) ||
+        !read_string(root.get(), "labels_path",   config.labels_path,   false)) {
         std::cout << "[App] Error: Missing or invalid pipeline field" << std::endl;
         return false;
+    }
+
+    // Optional num_classes (0 = derive from model output at runtime)
+    {
+        json_object* val = nullptr;
+        if (json_object_object_get_ex(root.get(), "num_classes", &val) &&
+            json_object_is_type(val, json_type_int))
+            config.num_classes = static_cast<size_t>(json_object_get_int(val));
+    }
+
+    // Optional overlap_frames (-1 = not set, no overlap-save processing)
+    {
+        json_object* val = nullptr;
+        if (json_object_object_get_ex(root.get(), "overlap_frames", &val) &&
+            json_object_is_type(val, json_type_int))
+            config.overlap_frames = json_object_get_int(val);
     }
 
     // Parse dsp_config — required for pipelines using DSP generic service
@@ -234,7 +418,7 @@ bool PipelineManager::loadPipelineFromJson(const std::string& json_content)
             !read_string(object, "stage_id",     stage.stage_id,     true) ||
             !read_string(object, "service",      stage.service,      true) ||
             !read_string(object, "message_type", stage.message_type, true) ||
-            (stage.service != "generic" && stage.service != "tvm")) {
+            (stage.service != "dsp" && stage.service != "tvm")) {
             std::cout << "[App] Error: Invalid pipeline stage at index " << index << std::endl;
             return false;
         }

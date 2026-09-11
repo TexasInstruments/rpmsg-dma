@@ -2,6 +2,9 @@
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include <sstream>
+#include <vector>
+#include <cstdint>
 
 namespace {
 
@@ -53,7 +56,47 @@ PipelineManager::CommandResult run_tvm_pipeline(
         return PipelineManager::CommandResult::ERROR;
     }
 
-    if (!tvm_client.run_inference(state.current_input_file)) {
+    // Load input .bin as flat float32 tensor
+    std::ifstream f(state.current_input_file, std::ios::binary | std::ios::ate);
+    if (!f.is_open() || f.tellg() <= 0 ||
+        f.tellg() % static_cast<std::streamoff>(sizeof(float)) != 0) {
+        std::cout << "[App] Error: Cannot open or invalid input tensor: "
+                  << state.current_input_file << std::endl;
+        return PipelineManager::CommandResult::ERROR;
+    }
+    const size_t num_floats = static_cast<size_t>(f.tellg()) / sizeof(float);
+    f.seekg(0);
+    std::vector<float> input(num_floats), output;
+    f.read(reinterpret_cast<char*>(input.data()), num_floats * sizeof(float));
+    std::cout << "[App] Loaded " << num_floats << " floats from "
+              << state.current_input_file << std::endl;
+
+    // Parse input_shape from TVM stage parameters — required e.g. "1,2,401,161"
+    const auto& stage_params = state.pipeline_config.stages[0].parameters;
+    auto shape_it = stage_params.find("input_shape");
+    if (shape_it == stage_params.end()) {
+        std::cout << "[App] Error: TVM stage missing required parameter: input_shape" << std::endl;
+        return PipelineManager::CommandResult::ERROR;
+    }
+    std::vector<int64_t> input_shape;
+    {
+        std::istringstream ss(shape_it->second);
+        std::string token;
+        while (std::getline(ss, token, ','))
+            input_shape.push_back(std::stoll(token));
+    }
+
+    // Validate file size matches shape
+    size_t expected_floats = 1;
+    for (auto d : input_shape) expected_floats *= static_cast<size_t>(d);
+    if (num_floats != expected_floats) {
+        std::cout << "[App] Error: Input tensor size mismatch: file has " << num_floats
+                  << " floats but input_shape " << shape_it->second
+                  << " expects " << expected_floats << std::endl;
+        return PipelineManager::CommandResult::ERROR;
+    }
+
+    if (!tvm_client.run_inference(input, output, input_shape)) {
         std::cout << "[App] Error: TVM inference failed" << std::endl;
         return PipelineManager::CommandResult::ERROR;
     }
@@ -62,7 +105,6 @@ PipelineManager::CommandResult run_tvm_pipeline(
     const std::string output_file =
         (input_path.parent_path() / (input_path.stem().string() + "_output.bin")).string();
 
-    const std::vector<float>& output = tvm_client.get_output();
     if (!saveTensorFile(output_file, output)) {
         std::cout << "[App] Error: Failed to save output tensor" << std::endl;
         return PipelineManager::CommandResult::ERROR;
