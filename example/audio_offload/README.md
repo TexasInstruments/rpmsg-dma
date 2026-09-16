@@ -1,7 +1,7 @@
 # Audio Offload Example
 ```
 This example demonstrates how to offload 8-channel audio processing from Linux user-space
-to the C7x DSP on TI AM62x platforms using TI’s RPMsg-char framework and Linux DMA Heaps.
+to the C7x DSP on TI AM62D using TI’s RPMsg-char framework and Linux DMA Heaps.
 ```
 ## Features
 ```
@@ -38,7 +38,10 @@ This install:
 - The DSP Test firmware file (dsp_audio_filter_offload.c75ss0-0.release.strip.out) to `/usr/lib/firmware`
 
 To build only the example, use:
-cmake -S . -B build -DBUILD_EXAMPLE=ON
+cmake -S . -B build \
+  -DBUILD_EDGE_AI_EXAMPLE=OFF \
+  -DBUILD_2DFFT_OFFLOAD_EXAMPLE=OFF \
+  -DBUILD_SIGNAL_CHAIN_BIQUAD_EXAMPLE=OFF
 ```
 ## Configuration (dsp_offload.cfg)
 ```
@@ -90,3 +93,29 @@ AUDIO_LOGGING_ENABLE: 1 to save raw audio data to file(/tmp/wave_xx_ch0.txt)
 ```
 Refer: https://github.com/TexasInstruments/rpmsg-dma/blob/REL.11.01/example/audio_offload/host%20utility/README
 ```
+
+## Web Portal Integration
+
+The AM62D portal in
+[`webserver-oob-demo`](https://github.com/TexasInstruments/webserver-oob-demo)
+can launch and stop `rpmsg_audio_offload_example` and display input/output
+spectra plus Arm/C7x performance metrics in a browser. It replaces the Python
+host monitor for portal-driven demonstrations.
+
+The application acts as a local TCP server. The webserver plugin connects to:
+
+| Port | Purpose |
+| --- | --- |
+| 8888 | Logs and performance metrics |
+| 8889 | Commands, including start/stop and filter control |
+| 8890 | Tagged input PCM frames |
+| 8891 | Tagged output PCM frames |
+
+Install this example, its configuration, sample audio, and matching firmware
+on the EVM before installing or starting the webserver. With the default
+webserver configuration, the binary must be available at
+`/usr/bin/rpmsg_audio_offload_example`. The webserver manages the process and
+connects to it over `127.0.0.1`; do not run a second instance manually.
+
+Open the portal on port 3000 of the EVM and select **Audio DSP Offload**. See
+the webserver repository for portal build and deployment instructions.
