@@ -41,7 +41,10 @@ This installs:
 - The C7x firmware file (`sigchain_biquad_cascade.c75ss0-0.release.strip.out`) to `/lib/firmware/`
 
 To build only this example:
-cmake -S . -B build -DBUILD_SIGCHAIN_BIQUAD_EXAMPLE=ON
+cmake -S . -B build \
+  -DBUILD_EDGE_AI_EXAMPLE=OFF \
+  -DBUILD_AUDIO_OFFLOAD_EXAMPLE=OFF \
+  -DBUILD_2DFFT_OFFLOAD_EXAMPLE=OFF
 ```
 ## Network Protocol
 ```
@@ -87,3 +90,28 @@ The GUI provides:
 - Live C7x DSP performance monitoring
 - Demo start/stop control
 ```
+
+## Web Portal Integration
+
+The AM62D portal in
+[`webserver-oob-demo`](https://github.com/TexasInstruments/webserver-oob-demo)
+can launch this example and provide browser-based start/stop, log, and live C7x
+metric views. The application remains the TCP server; the webserver bridges its
+three local TCP connections to the browser:
+
+| Port | Purpose |
+| --- | --- |
+| 8888 | Application logs |
+| 8889 | `START`, `STOP`, and codec-control commands |
+| 8890 | JSON performance statistics |
+
+With the default portal configuration, install the executable at
+`/usr/bin/rpmsg_sigchain_biquad_example` and its firmware under
+`/lib/firmware`. The portal can also check and enable the AM62D DSP-controlled
+audio overlay; enabling it updates the boot configuration and requires a
+reboot. Verify the board-specific overlay and boot-media path before using that
+operation.
+
+Open the portal on port 3000 of the EVM and select **Sigchain Biquad EQ**. Do
+not run the standalone Python GUI or a second application instance at the same
+time because the TCP ports and C7x are exclusive resources.
