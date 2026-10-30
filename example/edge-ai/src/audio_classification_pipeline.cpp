@@ -134,6 +134,7 @@ PipelineManager::CommandResult run_audio_classification_pipeline(
         size_t tvm_chunks = 0;
 
         auto t_total = std::chrono::steady_clock::now();
+        bool first_stft_batch = true;
 
         for (size_t chunk_idx = 0; chunk_idx < num_full_chunks; ++chunk_idx) {
             const size_t chunk_frame_offset = chunk_idx * TOTAL_FRAMES;
@@ -162,13 +163,15 @@ PipelineManager::CommandResult run_audio_classification_pipeline(
                 params["output_buffer"] = hex_address(dma_mel->phys_addr + spectral_offset);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_stft_batch ? "1" : "0";
+                first_stft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   batch " << (batch_idx + 1) << "/" << NUM_BATCHES
                               << ": " << frames_this_batch << " frames"
                               << " in=0x" << std::hex << dma_audio->phys_addr
                               << " out=0x" << (dma_mel->phys_addr + spectral_offset)
-                              << std::dec << std::endl;
+                              << std::dec << " clear=" << params["clear"] << std::endl;
 
                 auto r = dsp_client.process("C7X_MSG_STFT_ANALYZE", params);
                 if (!r.success)
@@ -310,6 +313,7 @@ PipelineManager::CommandResult run_audio_classification_pipeline_stream(
         std::vector<float>   chunk_input(TOTAL_FRAMES * MODEL_ELEMS);
         std::vector<float>   chunk_scores;
         size_t               inference_count = 0;
+        bool                 first_stft_batch = true;
 
         for (;;) {
             /* Read exactly one window of raw PCM from stdin. */
@@ -354,10 +358,13 @@ PipelineManager::CommandResult run_audio_classification_pipeline_stream(
                 params["output_buffer"] = hex_address(dma_mel->phys_addr + spectral_offset);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_stft_batch ? "1" : "0";
+                first_stft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   batch " << (batch_idx + 1) << "/" << NUM_BATCHES
-                              << ": " << frames_this_batch << " frames" << std::endl;
+                              << ": " << frames_this_batch << " frames"
+                              << " clear=" << params["clear"] << std::endl;
 
                 auto r = dsp_client.process("C7X_MSG_STFT_ANALYZE", params);
                 if (!r.success)
@@ -501,6 +508,7 @@ PipelineManager::CommandResult run_audio_classification_pipeline_alsa(
         std::vector<float>   chunk_input(TOTAL_FRAMES * MODEL_ELEMS);
         std::vector<float>   chunk_scores;
         size_t               inference_count = 0;
+        bool                 first_stft_batch = true;
 
         for (;;) {
             /* Read exactly one window of raw PCM from ALSA. */
@@ -540,10 +548,13 @@ PipelineManager::CommandResult run_audio_classification_pipeline_alsa(
                 params["output_buffer"] = hex_address(dma_mel->phys_addr + spectral_offset);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_stft_batch ? "1" : "0";
+                first_stft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   batch " << (batch_idx + 1) << "/" << NUM_BATCHES
-                              << ": " << frames_this_batch << " frames\n";
+                              << ": " << frames_this_batch << " frames"
+                              << " clear=" << params["clear"] << "\n";
 
                 auto r = dsp_client.process("C7X_MSG_STFT_ANALYZE", params);
                 if (!r.success)

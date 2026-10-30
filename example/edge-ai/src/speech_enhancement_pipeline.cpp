@@ -177,6 +177,8 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
         AudioStream audio_stream;
 
         auto t_total_start = std::chrono::steady_clock::now();
+        bool first_stft_batch  = true;
+        bool first_istft_batch = true;
 
         for (size_t chunk_idx = 0; chunk_idx < n_chunks; chunk_idx++) {
             // Sample offset for this chunk (overlap-save: chunks are HOP_SAMPLES apart)
@@ -215,12 +217,15 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
                 params["output_buffer"] = hex_address(stft_out_base + spectral_offset);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_stft_batch ? "1" : "0";
+                first_stft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   STFT batch " << (batch_idx+1) << "/" << num_batches_chunk
                               << ": " << frames_this_batch << " frames"
                               << " in=0x" << std::hex << dma_work_a->phys_addr
-                              << " out=0x" << (stft_out_base + spectral_offset) << std::dec << std::endl;
+                              << " out=0x" << (stft_out_base + spectral_offset)
+                              << std::dec << " clear=" << params["clear"] << std::endl;
 
                 auto r = dsp_client.process("C7X_MSG_STFT_ANALYZE", params);
                 if (!r.success)
@@ -304,12 +309,15 @@ PipelineManager::CommandResult run_speech_enhancement_pipeline(
                 params["output_buffer"] = hex_address(dma_work_a->phys_addr);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_istft_batch ? "1" : "0";
+                first_istft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   ISTFT batch " << (batch_idx+1) << "/" << ISTFT_NUM_BATCHES
                               << ": " << frames_this_batch << " frames"
                               << " in=0x" << std::hex << (istft_src_base + spectral_offset)
-                              << " out=0x" << dma_work_a->phys_addr << std::dec << std::endl;
+                              << " out=0x" << dma_work_a->phys_addr
+                              << std::dec << " clear=" << params["clear"] << std::endl;
 
                 auto r = dsp_client.process("C7X_MSG_ISTFT_SYNTHESIZE", params);
                 if (!r.success)
