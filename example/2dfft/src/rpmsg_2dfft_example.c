@@ -164,10 +164,32 @@ void init_rpmsg_buffer()
         lbuf.data_size = data_buf.size;
         lbuf.params_size = param_buf.size;
 
-        ibuf.data_buffer = (uint32_t)data_buf.phys_addr;
-        ibuf.params_buffer = (uint32_t)param_buf.phys_addr;
-        ibuf.data_size = data_buf.size;
-        ibuf.params_size = param_buf.size;
+        memset(&offload_msg, 0, sizeof(offload_msg));
+
+        offload_msg.header.magic = TI_RPMSG_RPC_PROTOCOL_MAGIC;
+        offload_msg.header.version = TI_RPMSG_RPC_PROTOCOL_VERSION;
+        offload_msg.header.service = TI_RPMSG_RPC_SERVICE_GENERIC;
+        offload_msg.header.opcode = TI_RPMSG_RPC_GENERIC_OP_EXECUTE;
+        offload_msg.header.sequence = 1U;
+        offload_msg.header.payload_size =
+                sizeof(offload_msg) - sizeof(offload_msg.header);
+
+        offload_msg.kernel_id = FFT2D_KERNEL_ID;
+        offload_msg.num_inputs = 2U;
+        offload_msg.num_outputs = 2U;
+
+        offload_msg.inputs[0].address = (uint64_t)data_buf.phys_addr;
+        offload_msg.inputs[0].size = data_buf.size;
+        offload_msg.inputs[1].address = (uint64_t)param_buf.phys_addr;
+        offload_msg.inputs[1].size = param_buf.size;
+
+        /*
+         * 2D FFT is in-place. The output descriptors point to the same shared
+         * DMA buffers so the remote library performs the cache writeback after
+         * the kernel finishes.
+         */
+        offload_msg.outputs[0] = offload_msg.inputs[0];
+        offload_msg.outputs[1] = offload_msg.inputs[1];
 
         dspParams = (params_t*)lbuf.params_buf;
 }
@@ -217,10 +239,14 @@ int main()
 	// Initialize the RPMsg buffer for communication
         init_rpmsg_buffer();
 
-        DBG("dmabuf for data buffer::  Kernel: %p Phy: 0x%x Size = %d\n",
-			lbuf.data_buf, ibuf.data_buffer, lbuf.data_size);
-        DBG("dmabuf for params buffer::  Kernel: %p Phy: 0x%x Size = %d\n",
-			lbuf.params_buf, ibuf.params_buffer, lbuf.params_size);
+        DBG("dmabuf for data buffer::  Kernel: %p Phy: 0x%llx Size = %d\n",
+			lbuf.data_buf,
+			(unsigned long long)offload_msg.inputs[0].address,
+			lbuf.data_size);
+        DBG("dmabuf for params buffer::  Kernel: %p Phy: 0x%llx Size = %d\n",
+			lbuf.params_buf,
+			(unsigned long long)offload_msg.inputs[1].address,
+			lbuf.params_size);
 
 	// Load input data into the DMA buffer
 	dmabuf_sync(data_buf.dma_buf_fd, DMA_BUF_SYNC_START);
@@ -235,10 +261,12 @@ int main()
         signal(SIGINT, handle_sigint);
 
 	int packet_len;
-	packet_len = sizeof(ibuf);
+	ti_rpmsg_rpc_wire_header_t response;
 
-	// Perform the 2D FFT operation using RPMsg communication
-	ret = send_msg(rpmsg_fd, (char *)&ibuf, sizeof(ibuf));
+	packet_len = sizeof(offload_msg);
+
+	// Perform the 2D FFT operation using the TI offload protocol over RPMsg
+	ret = send_msg(rpmsg_fd, (char *)&offload_msg, sizeof(offload_msg));
 	if (ret < 0) {
 		printf("send_msg failed, ret = %d\n", ret);
 		goto rpmsg_snd_recv_fail;
@@ -247,9 +275,21 @@ int main()
 		printf("bytes written does not match send request, ret = %d, packet_len = %d\n", ret, packet_len);
 		goto rpmsg_snd_recv_fail;
 	}
-	ret = recv_msg(rpmsg_fd, 256, (char *)&ibuf, &packet_len);
+	memset(&response, 0, sizeof(response));
+	packet_len = sizeof(response);
+	ret = recv_msg(rpmsg_fd, sizeof(response), (char *)&response, &packet_len);
 	if (ret < 0) {
 		printf("recv_msg failed ret = %d\n", ret);
+		goto rpmsg_snd_recv_fail;
+	}
+	if ((packet_len < (int)sizeof(response)) ||
+	    (response.magic != TI_RPMSG_RPC_PROTOCOL_MAGIC) ||
+	    (response.version != TI_RPMSG_RPC_PROTOCOL_VERSION) ||
+	    (response.service != TI_RPMSG_RPC_SERVICE_GENERIC) ||
+	    (response.opcode != TI_RPMSG_RPC_GENERIC_OP_EXECUTE) ||
+	    (response.status != 0)) {
+		printf("invalid offload response: len=%d status=%d\n",
+		       packet_len, response.status);
 		goto rpmsg_snd_recv_fail;
 	}
 
