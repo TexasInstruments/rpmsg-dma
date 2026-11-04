@@ -36,8 +36,8 @@ struct c7x_msg_hdr {
 };
 
 /*
- * Generic DSP message — flat payload, 5 x uint32_t after the header.
- * Wire size is always fixed: sizeof(c7x_msg_hdr) + 5 * sizeof(uint32_t).
+ * Generic DSP message — flat payload, 6 x uint32_t after the header.
+ * Wire size is always fixed: sizeof(c7x_msg_hdr) + 6 * sizeof(uint32_t).
  *
  * Field mapping by message type:
  *
@@ -48,9 +48,11 @@ struct c7x_msg_hdr {
  *  param2 | output_buffer (phys addr) | output_buffer (phys addr) | input_frame
  *  param3 | input_frame               | input_frame               | fft_size
  *  param4 | output_frame              | output_frame              | flag (0=deinterleave, 1=interleave)
+ *  param5 | clear (0/1)               | clear (0/1)               | clear (0)
  *
  * Note: param0 maps differently per message type because the firmware
  * STFT/ISTFT and utils structs have different layouts (see table above).
+ * param5 (clear) tells STFT to clear its graph when 1 (used for YAMNet/VGGish chunk boundaries).
  *
  * To add a new message type:
  *   1. Add its opcodes to c7x_msg_type below
@@ -65,6 +67,7 @@ struct dsp_msg {
     uint32_t param2;
     uint32_t param3;
     uint32_t param4;
+    uint32_t param5;
 };
 
 enum c7x_msg_type {
@@ -77,7 +80,7 @@ enum c7x_msg_type {
 };
 
 static_assert(sizeof(c7x_msg_hdr) == 16);
-static_assert(sizeof(dsp_msg) == sizeof(c7x_msg_hdr) + 5 * sizeof(uint32_t));
+static_assert(sizeof(dsp_msg) == sizeof(c7x_msg_hdr) + 6 * sizeof(uint32_t));
 
 enum c7x_status {
     C7X_STATUS_SUCCESS = 0,
@@ -169,6 +172,7 @@ DspTaskClient::ProcessingResult DspTaskClient::process(
         req.param2 = parameter_value(parameters, "output_buffer", 0, 16);  /* output_buffer  */
         req.param3 = parameter_value(parameters, "input_frame",   0);      /* input_frame    */
         req.param4 = parameter_value(parameters, "output_frame",  0);      /* output_frame   */
+        req.param5 = parameter_value(parameters, "clear",         0);      /* clear flag     */
 #ifdef DEBUG
         std::cout << "[GenericClient] STFT_ANALYZE - Sending to firmware:" << std::endl;
         std::cout << "[GenericClient]   selected_model=" << req.param0 << std::endl;
@@ -176,6 +180,7 @@ DspTaskClient::ProcessingResult DspTaskClient::process(
         std::cout << "[GenericClient]   output_buffer=0x" << std::hex << req.param2 << std::endl;
         std::cout << "[GenericClient]   input_frame="  << std::dec << req.param3 << " frames" << std::endl;
         std::cout << "[GenericClient]   output_frame=" << std::dec << req.param4 << " frames" << std::endl;
+        std::cout << "[GenericClient]   clear=" << req.param5 << std::endl;
 #endif
         struct dsp_msg resp = {};
         if (!exchange_message(rpmsg_fd_, req, resp)) {
@@ -214,6 +219,7 @@ DspTaskClient::ProcessingResult DspTaskClient::process(
         req.param2 = parameter_value(parameters, "output_buffer", 0, 16);  /* output_buffer  */
         req.param3 = parameter_value(parameters, "input_frame",   0);      /* input_frame    */
         req.param4 = parameter_value(parameters, "output_frame",  0);      /* output_frame   */
+        req.param5 = parameter_value(parameters, "clear",         0);      /* clear flag     */
 #ifdef DEBUG
         std::cout << "[GenericClient] ISTFT_SYNTHESIZE - Sending to firmware:" << std::endl;
         std::cout << "[GenericClient]   selected_model=" << req.param0 << std::endl;
@@ -221,6 +227,7 @@ DspTaskClient::ProcessingResult DspTaskClient::process(
         std::cout << "[GenericClient]   output_buffer=0x" << std::hex << req.param2 << std::endl;
         std::cout << "[GenericClient]   input_frame="  << std::dec << req.param3 << " frames" << std::endl;
         std::cout << "[GenericClient]   output_frame=" << std::dec << req.param4 << " frames" << std::endl;
+        std::cout << "[GenericClient]   clear=" << req.param5 << std::endl;
 #endif
         struct dsp_msg resp = {};
         if (!exchange_message(rpmsg_fd_, req, resp)) {
@@ -259,6 +266,7 @@ DspTaskClient::ProcessingResult DspTaskClient::process(
         req.param2 = parameter_value(parameters, "input_frame",   0);       /* input_frame    */
         req.param3 = parameter_value(parameters, "fft_size",      0);       /* fft_size       */
         req.param4 = parameter_value(parameters, "flag",          0);       /* flag           */
+        req.param5 = 0;                                                      /* clear (unused) */
 
         struct dsp_msg resp = {};
         if (!exchange_message(rpmsg_fd_, req, resp)) {
