@@ -38,6 +38,37 @@ std::vector<std::string> load_labels(const std::string& path)
     return labels;
 }
 
+/* The C7x STFT always writes mel features frame-major: [TOTAL_FRAMES, MODEL_ELEMS].
+ * Some compiled TVM graphs (e.g. VGGish) instead declare a mel-major input
+ * [..., MODEL_ELEMS, TOTAL_FRAMES], which requires a transpose before feeding the
+ * raw STFT output in — otherwise every element lands in the wrong (mel, frame) slot. */
+static bool tvm_shape_needs_transpose(const std::vector<int64_t>& shape,
+                                      size_t total_frames, size_t model_elems,
+                                      const char* stage_id)
+{
+    if (shape.size() < 2)
+        throw PipelineError{std::string{"TVM input_shape for stage '"} + stage_id +
+                            "' must have at least 2 dimensions"};
+    const int64_t last  = shape.back();
+    const int64_t last2 = shape[shape.size() - 2];
+    if (last2 == static_cast<int64_t>(total_frames) && last == static_cast<int64_t>(model_elems))
+        return false; /* frame-major: matches C7x STFT output layout directly */
+    if (last2 == static_cast<int64_t>(model_elems) && last == static_cast<int64_t>(total_frames))
+        return true;  /* mel-major: C7x output must be transposed before feeding TVM */
+    throw PipelineError{std::string{"TVM input_shape for stage '"} + stage_id +
+                        "' does not match STFT TOTAL_FRAMES/MODEL_ELEMS in either order"};
+}
+
+static void transpose_frame_to_mel_major(const std::vector<float>& src,
+                                         std::vector<float>& dst,
+                                         size_t total_frames, size_t model_elems)
+{
+    dst.resize(total_frames * model_elems);
+    for (size_t f = 0; f < total_frames; ++f)
+        for (size_t m = 0; m < model_elems; ++m)
+            dst[m * total_frames + f] = src[f * model_elems + m];
+}
+
 } // namespace
 
 PipelineManager::CommandResult run_audio_classification_pipeline(
@@ -84,6 +115,8 @@ PipelineManager::CommandResult run_audio_classification_pipeline(
             while (std::getline(ss, token, ','))
                 tvm_input_shape.push_back(std::stoll(token));
         }
+        const bool needs_transpose = tvm_shape_needs_transpose(
+            tvm_input_shape, TOTAL_FRAMES, MODEL_ELEMS, tvm_stage_ptr->stage_id.c_str());
 
         // Initialize TVM
         if (!state.tvm_artifacts_configured)
@@ -130,10 +163,12 @@ PipelineManager::CommandResult run_audio_classification_pipeline(
                   << " | Full chunks: " << num_full_chunks << std::endl;
 
         std::vector<float> chunk_input(TOTAL_FRAMES * MODEL_ELEMS);
+        std::vector<float> transposed_input;
         std::vector<float> chunk_scores;
         size_t tvm_chunks = 0;
 
         auto t_total = std::chrono::steady_clock::now();
+        bool first_stft_batch = true;
 
         for (size_t chunk_idx = 0; chunk_idx < num_full_chunks; ++chunk_idx) {
             const size_t chunk_frame_offset = chunk_idx * TOTAL_FRAMES;
@@ -162,13 +197,15 @@ PipelineManager::CommandResult run_audio_classification_pipeline(
                 params["output_buffer"] = hex_address(dma_mel->phys_addr + spectral_offset);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_stft_batch ? "1" : "0";
+                first_stft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   batch " << (batch_idx + 1) << "/" << NUM_BATCHES
                               << ": " << frames_this_batch << " frames"
                               << " in=0x" << std::hex << dma_audio->phys_addr
                               << " out=0x" << (dma_mel->phys_addr + spectral_offset)
-                              << std::dec << std::endl;
+                              << std::dec << " clear=" << params["clear"] << std::endl;
 
                 auto r = dsp_client.process("C7X_MSG_STFT_ANALYZE", params);
                 if (!r.success)
@@ -181,8 +218,12 @@ PipelineManager::CommandResult run_audio_classification_pipeline(
             std::copy_n(dma_mel.data<float>(), TOTAL_FRAMES * MODEL_ELEMS, chunk_input.begin());
             dma_mel.end_cpu_access();
 
+            if (needs_transpose)
+                transpose_frame_to_mel_major(chunk_input, transposed_input, TOTAL_FRAMES, MODEL_ELEMS);
+            const std::vector<float>& tvm_in = needs_transpose ? transposed_input : chunk_input;
+
             auto t_tvm = std::chrono::steady_clock::now();
-            if (!tvm_client.run_inference(chunk_input, chunk_scores, tvm_input_shape))
+            if (!tvm_client.run_inference(tvm_in, chunk_scores, tvm_input_shape))
                 throw PipelineError{"TVM inference failed on chunk " +
                                     std::to_string(chunk_idx + 1)};
             double t_tvm_ms = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -276,6 +317,8 @@ PipelineManager::CommandResult run_audio_classification_pipeline_stream(
             while (std::getline(ss, token, ','))
                 tvm_input_shape.push_back(std::stoll(token));
         }
+        const bool needs_transpose = tvm_shape_needs_transpose(
+            tvm_input_shape, TOTAL_FRAMES, MODEL_ELEMS, tvm_stage_ptr->stage_id.c_str());
 
         if (!state.tvm_artifacts_configured)
             throw PipelineError{"audio_classification_stream requires TVM artifacts"};
@@ -308,8 +351,10 @@ PipelineManager::CommandResult run_audio_classification_pipeline_stream(
 
         std::vector<int16_t> audio_window(chunk_samples);
         std::vector<float>   chunk_input(TOTAL_FRAMES * MODEL_ELEMS);
+        std::vector<float>   transposed_input;
         std::vector<float>   chunk_scores;
         size_t               inference_count = 0;
+        bool                 first_stft_batch = true;
 
         for (;;) {
             /* Read exactly one window of raw PCM from stdin. */
@@ -354,10 +399,13 @@ PipelineManager::CommandResult run_audio_classification_pipeline_stream(
                 params["output_buffer"] = hex_address(dma_mel->phys_addr + spectral_offset);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_stft_batch ? "1" : "0";
+                first_stft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   batch " << (batch_idx + 1) << "/" << NUM_BATCHES
-                              << ": " << frames_this_batch << " frames" << std::endl;
+                              << ": " << frames_this_batch << " frames"
+                              << " clear=" << params["clear"] << std::endl;
 
                 auto r = dsp_client.process("C7X_MSG_STFT_ANALYZE", params);
                 if (!r.success)
@@ -370,7 +418,11 @@ PipelineManager::CommandResult run_audio_classification_pipeline_stream(
             std::copy_n(dma_mel.data<float>(), TOTAL_FRAMES * MODEL_ELEMS, chunk_input.begin());
             dma_mel.end_cpu_access();
 
-            if (!tvm_client.run_inference(chunk_input, chunk_scores, tvm_input_shape))
+            if (needs_transpose)
+                transpose_frame_to_mel_major(chunk_input, transposed_input, TOTAL_FRAMES, MODEL_ELEMS);
+            const std::vector<float>& tvm_in = needs_transpose ? transposed_input : chunk_input;
+
+            if (!tvm_client.run_inference(tvm_in, chunk_scores, tvm_input_shape))
                 throw PipelineError{"TVM inference failed on window " +
                                     std::to_string(inference_count + 1)};
 
@@ -445,6 +497,8 @@ PipelineManager::CommandResult run_audio_classification_pipeline_alsa(
             while (std::getline(ss, token, ','))
                 tvm_input_shape.push_back(std::stoll(token));
         }
+        const bool needs_transpose = tvm_shape_needs_transpose(
+            tvm_input_shape, TOTAL_FRAMES, MODEL_ELEMS, tvm_stage_ptr->stage_id.c_str());
 
         if (!state.tvm_artifacts_configured)
             throw PipelineError{"audio_classification_alsa requires TVM artifacts"};
@@ -499,8 +553,10 @@ PipelineManager::CommandResult run_audio_classification_pipeline_alsa(
 
         std::vector<int16_t> audio_window(chunk_samples);
         std::vector<float>   chunk_input(TOTAL_FRAMES * MODEL_ELEMS);
+        std::vector<float>   transposed_input;
         std::vector<float>   chunk_scores;
         size_t               inference_count = 0;
+        bool                 first_stft_batch = true;
 
         for (;;) {
             /* Read exactly one window of raw PCM from ALSA. */
@@ -540,10 +596,13 @@ PipelineManager::CommandResult run_audio_classification_pipeline_alsa(
                 params["output_buffer"] = hex_address(dma_mel->phys_addr + spectral_offset);
                 params["input_frame"]   = std::to_string(frames_this_batch);
                 params["output_frame"]  = std::to_string(frames_this_batch);
+                params["clear"]         = first_stft_batch ? "1" : "0";
+                first_stft_batch = false;
 
                 if (debug)
                     std::cout << "[App]   batch " << (batch_idx + 1) << "/" << NUM_BATCHES
-                              << ": " << frames_this_batch << " frames\n";
+                              << ": " << frames_this_batch << " frames"
+                              << " clear=" << params["clear"] << "\n";
 
                 auto r = dsp_client.process("C7X_MSG_STFT_ANALYZE", params);
                 if (!r.success)
@@ -556,7 +615,11 @@ PipelineManager::CommandResult run_audio_classification_pipeline_alsa(
             std::copy_n(dma_mel.data<float>(), TOTAL_FRAMES * MODEL_ELEMS, chunk_input.begin());
             dma_mel.end_cpu_access();
 
-            if (!tvm_client.run_inference(chunk_input, chunk_scores, tvm_input_shape))
+            if (needs_transpose)
+                transpose_frame_to_mel_major(chunk_input, transposed_input, TOTAL_FRAMES, MODEL_ELEMS);
+            const std::vector<float>& tvm_in = needs_transpose ? transposed_input : chunk_input;
+
+            if (!tvm_client.run_inference(tvm_in, chunk_scores, tvm_input_shape))
                 throw PipelineError{"TVM inference failed on window " +
                                     std::to_string(inference_count + 1)};
 
