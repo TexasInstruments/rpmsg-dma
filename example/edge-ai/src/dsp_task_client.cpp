@@ -1,5 +1,7 @@
 #include "dsp_task_client.h"
 #include <unistd.h>
+#include <cerrno>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -7,10 +9,30 @@
 extern "C" {
 #include "rpmsg.h"
 #include "dmabuf.h"
+#include "ti_rpmsg_rpc_client.h"
 }
 
 namespace {
 
+/* Must match examples/edge-ai/tvm/common/dsp_service.h in MCU+ SDK. */
+constexpr uint32_t EDGEAI_DSP_KERNEL_STFT  = 1U;
+constexpr uint32_t EDGEAI_DSP_KERNEL_ISTFT = 2U;
+constexpr uint32_t EDGEAI_DSP_KERNEL_UTILS = 3U;
+
+struct EdgeAiDspStftParams {
+    uint32_t selected_model;
+    uint32_t input_frame;
+    uint32_t output_frame;
+};
+
+struct EdgeAiDspUtilsParams {
+    uint32_t input_frame;
+    uint32_t fft_size;
+    uint32_t flag;
+};
+
+static_assert(sizeof(EdgeAiDspStftParams) == 12U);
+static_assert(sizeof(EdgeAiDspUtilsParams) == 12U);
 
 uint32_t parameter_value(const std::map<std::string, std::string>& parameters,
                          const std::string& name, uint32_t default_value,
@@ -28,73 +50,80 @@ uint32_t parameter_value(const std::map<std::string, std::string>& parameters,
     return static_cast<uint32_t>(value);
 }
 
-struct c7x_msg_hdr {
-    uint32_t type;
-    uint32_t seq;
-    uint32_t len;
-    int32_t  status;
-};
-
-/*
- * Generic DSP message — flat payload, 5 x uint32_t after the header.
- * Wire size is always fixed: sizeof(c7x_msg_hdr) + 5 * sizeof(uint32_t).
- *
- * Field mapping by message type:
- *
- *  param  | C7X_MSG_STFT_ANALYZE      | C7X_MSG_ISTFT_SYNTHESIZE  | C7X_DEINTERLEAVE_MSG_ANALYZE
- *  -------|---------------------------|---------------------------|-----------------------------
- *  param0 | selected_model            | selected_model            | input_buffer  (phys addr)
- *  param1 | input_buffer  (phys addr) | input_buffer  (phys addr) | output_buffer (phys addr)
- *  param2 | output_buffer (phys addr) | output_buffer (phys addr) | input_frame
- *  param3 | input_frame               | input_frame               | fft_size
- *  param4 | output_frame              | output_frame              | flag (0=deinterleave, 1=interleave)
- *
- * Note: param0 maps differently per message type because the firmware
- * STFT/ISTFT and utils structs have different layouts (see table above).
- *
- * To add a new message type:
- *   1. Add its opcodes to c7x_msg_type below
- *   2. Add a column to this table
- *   3. Add a new else-if branch in DspTaskClient::process()
- *   4. Set unused params to 0
- */
-struct dsp_msg {
-    struct c7x_msg_hdr hdr;
-    uint32_t param0;
-    uint32_t param1;
-    uint32_t param2;
-    uint32_t param3;
-    uint32_t param4;
-};
-
-enum c7x_msg_type {
-    C7X_MSG_STFT_ANALYZE              = 0x1020,
-    C7X_MSG_STFT_ANALYZE_RESP         = 0x2020,
-    C7X_MSG_ISTFT_SYNTHESIZE          = 0x1030,
-    C7X_MSG_ISTFT_SYNTHESIZE_RESP     = 0x2030,
-    C7X_DEINTERLEAVE_MSG_ANALYZE      = 0x1040,
-    C7X_DEINTERLEAVE_MSG_ANALYZE_RESP = 0x2040
-};
-
-static_assert(sizeof(c7x_msg_hdr) == 16);
-static_assert(sizeof(dsp_msg) == sizeof(c7x_msg_hdr) + 5 * sizeof(uint32_t));
-
-enum c7x_status {
-    C7X_STATUS_SUCCESS = 0,
-    C7X_STATUS_ERROR = -1
-};
-
-template <typename Message>
-bool exchange_message(int descriptor, Message& request, Message& response)
+uint64_t parameter_address(const std::map<std::string, std::string>& parameters,
+                           const std::string& name)
 {
-    if (send_msg(descriptor, reinterpret_cast<char*>(&request), sizeof(request)) < 0)
-        return false;
+    const auto parameter = parameters.find(name);
+    if (parameter == parameters.end())
+        return 0U;
 
-    int response_length = sizeof(response);
-    if (recv_msg(descriptor, sizeof(response), reinterpret_cast<char*>(&response),
-                 &response_length) < 0)
+    size_t parsed = 0;
+    const auto value = std::stoull(parameter->second, &parsed, 16);
+    if (parsed != parameter->second.size())
+        throw std::out_of_range{name + " is not a uint64 address"};
+    return static_cast<uint64_t>(value);
+}
+
+uint32_t wire_size(uint64_t bytes, const char *what)
+{
+    if (bytes > std::numeric_limits<uint32_t>::max())
+        throw std::out_of_range{std::string{what} + " exceeds TI-Rpmsg-Rpc wire size"};
+    return static_cast<uint32_t>(bytes);
+}
+
+std::string client_error(int status)
+{
+    if (status >= 0)
+        return "unknown error";
+    return std::strerror(-status);
+}
+
+bool run_generic_kernel(int rpmsg_fd,
+                        uint32_t sequence,
+                        uint32_t kernel_id,
+                        uint64_t input_address,
+                        uint32_t input_size,
+                        uint64_t output_address,
+                        uint32_t output_size,
+                        const void *params,
+                        uint32_t params_size,
+                        int32_t& remote_status,
+                        std::string& error)
+{
+    TiRpmsg_Rpc_WireBufferDesc input = {};
+    TiRpmsg_Rpc_WireBufferDesc output = {};
+
+    input.address = input_address;
+    input.size = input_size;
+    input.flags = 0U;
+
+    output.address = output_address;
+    output.size = output_size;
+    output.flags = 0U;
+
+    const int status = ti_rpmsg_rpc_generic_execute(rpmsg_fd,
+                                                   sequence,
+                                                   kernel_id,
+                                                   &input,
+                                                   1U,
+                                                   &output,
+                                                   1U,
+                                                   params,
+                                                   params_size,
+                                                   &remote_status);
+    if (status != 0) {
+        error = "TI-Rpmsg-Rpc exchange failed: " + client_error(status) +
+                " (" + std::to_string(status) + ")";
         return false;
-    return response_length >= static_cast<int>(sizeof(c7x_msg_hdr));
+    }
+
+    if (remote_status != 0) {
+        error = "TI-Rpmsg-Rpc kernel failed, remote status=" +
+                std::to_string(remote_status);
+        return false;
+    }
+
+    return true;
 }
 
 } // namespace
@@ -156,134 +185,135 @@ DspTaskClient::ProcessingResult DspTaskClient::process(
     }
 
     try {
-    // Determine message type and send appropriate struct
-    if (message_type == "C7X_MSG_STFT_ANALYZE") {
-        struct dsp_msg req = {};
-        req.hdr.type   = C7X_MSG_STFT_ANALYZE;
-        req.hdr.seq    = sequence_number_++;
-        req.hdr.len    = sizeof(struct dsp_msg);
-        req.hdr.status = 0;
+        if ((message_type == "C7X_MSG_STFT_ANALYZE") ||
+            (message_type == "C7X_MSG_ISTFT_SYNTHESIZE")) {
+            const bool is_stft = (message_type == "C7X_MSG_STFT_ANALYZE");
+            const uint32_t kernel_id = is_stft ? EDGEAI_DSP_KERNEL_STFT
+                                               : EDGEAI_DSP_KERNEL_ISTFT;
+            const uint32_t input_frame = parameter_value(parameters, "input_frame", 0U);
+            const uint32_t output_frame = parameter_value(parameters, "output_frame", 0U);
+            const uint32_t hop_size = parameter_value(parameters, "hop_size", 0U);
+            const uint32_t model_elems = parameter_value(parameters, "model_elems", 0U);
+            const uint64_t input_address = parameter_address(parameters, "input_buffer");
+            const uint64_t output_address = parameter_address(parameters, "output_buffer");
+            EdgeAiDspStftParams params = {};
+            uint32_t input_size;
+            uint32_t output_size;
+            int32_t remote_status = 0;
+            std::string error;
+            const uint32_t sequence = sequence_number_++;
 
-        req.param0 = parameter_value(parameters, "selected_model", 0);     /* selected_model */
-        req.param1 = parameter_value(parameters, "input_buffer",  0, 16);  /* input_buffer   */
-        req.param2 = parameter_value(parameters, "output_buffer", 0, 16);  /* output_buffer  */
-        req.param3 = parameter_value(parameters, "input_frame",   0);      /* input_frame    */
-        req.param4 = parameter_value(parameters, "output_frame",  0);      /* output_frame   */
+            params.selected_model = parameter_value(parameters, "selected_model", 0U);
+            params.input_frame = input_frame;
+            params.output_frame = output_frame;
+
+            if (is_stft) {
+                input_size = wire_size((uint64_t)input_frame * hop_size * sizeof(int16_t),
+                                       "STFT input");
+                output_size = wire_size((uint64_t)output_frame * model_elems * sizeof(float),
+                                        "STFT output");
+            } else {
+                input_size = wire_size((uint64_t)input_frame * model_elems * sizeof(float),
+                                       "ISTFT input");
+                output_size = wire_size((uint64_t)output_frame * hop_size * sizeof(int16_t),
+                                        "ISTFT output");
+            }
+
 #ifdef DEBUG
-        std::cout << "[GenericClient] STFT_ANALYZE - Sending to firmware:" << std::endl;
-        std::cout << "[GenericClient]   selected_model=" << req.param0 << std::endl;
-        std::cout << "[GenericClient]   input_buffer=0x"  << std::hex << req.param1 << std::endl;
-        std::cout << "[GenericClient]   output_buffer=0x" << std::hex << req.param2 << std::endl;
-        std::cout << "[GenericClient]   input_frame="  << std::dec << req.param3 << " frames" << std::endl;
-        std::cout << "[GenericClient]   output_frame=" << std::dec << req.param4 << " frames" << std::endl;
+            std::cout << "[GenericClient] TI-Rpmsg-Rpc "
+                      << (is_stft ? "STFT" : "ISTFT")
+                      << " kernel=" << kernel_id
+                      << " seq=" << sequence
+                      << " in=0x" << std::hex << input_address
+                      << "/" << std::dec << input_size
+                      << " out=0x" << std::hex << output_address
+                      << "/" << std::dec << output_size
+                      << " frames=" << input_frame << "->" << output_frame
+                      << std::endl;
 #endif
-        struct dsp_msg resp = {};
-        if (!exchange_message(rpmsg_fd_, req, resp)) {
-            result.error_message = "STFT analyze message exchange failed";
-            return result;
-        }
 
-        if (resp.hdr.type != C7X_MSG_STFT_ANALYZE_RESP || resp.hdr.seq != req.hdr.seq) {
-            result.error_message = "Invalid STFT analyze response";
-            return result;
-        }
+            if (!run_generic_kernel(rpmsg_fd_,
+                                    sequence,
+                                    kernel_id,
+                                    input_address,
+                                    input_size,
+                                    output_address,
+                                    output_size,
+                                    &params,
+                                    sizeof(params),
+                                    remote_status,
+                                    error)) {
+                result.error_message = (is_stft ? "DSP STFT failed: "
+                                                : "DSP ISTFT failed: ") + error;
+                return result;
+            }
+
+            result.success = true;
+            result.input_size = input_frame;
+            result.output_size = output_frame;
+
+        } else if (message_type == "C7X_DEINTERLEAVE_MSG_ANALYZE") {
+            const uint32_t input_frame = parameter_value(parameters, "input_frame", 0U);
+            const uint32_t fft_size = parameter_value(parameters, "fft_size", 0U);
+            const uint32_t flag = parameter_value(parameters, "flag", 0U);
+            const uint64_t input_address = parameter_address(parameters, "input_buffer");
+            const uint64_t output_address = parameter_address(parameters, "output_buffer");
+            const uint64_t bins = (uint64_t)(fft_size / 2U) + 1U;
+            EdgeAiDspUtilsParams params = {};
+            uint32_t buffer_size;
+            int32_t remote_status = 0;
+            std::string error;
+            const uint32_t sequence = sequence_number_++;
+
+            params.input_frame = input_frame;
+            params.fft_size = fft_size;
+            params.flag = flag;
+
+            if ((flag == 0U) || (flag == 1U)) {
+                buffer_size = wire_size(2ULL * input_frame * bins * sizeof(float),
+                                        "deinterleave/interleave buffer");
+            } else if ((flag == 2U) || (flag == 3U)) {
+                buffer_size = wire_size((uint64_t)input_frame * bins * sizeof(double),
+                                        "matrix-transpose buffer");
+            } else {
+                result.error_message = "Invalid utils flag: " + std::to_string(flag);
+                return result;
+            }
+
 #ifdef DEBUG
-        std::cout << "[GenericClient] STFT_ANALYZE - Firmware responded:" << std::endl;
-        std::cout << "[GenericClient]   status="       << resp.hdr.status << std::endl;
-        std::cout << "[GenericClient]   input_frame="  << resp.param3 << " frames" << std::endl;
-        std::cout << "[GenericClient]   output_frame=" << resp.param4 << " frames" << std::endl;
+            std::cout << "[GenericClient] TI-Rpmsg-Rpc utils kernel="
+                      << EDGEAI_DSP_KERNEL_UTILS
+                      << " seq=" << sequence
+                      << " flag=" << flag
+                      << " in=0x" << std::hex << input_address
+                      << " out=0x" << output_address
+                      << std::dec << " bytes=" << buffer_size
+                      << std::endl;
 #endif
-        if (resp.hdr.status != C7X_STATUS_SUCCESS) {
-            result.error_message = "DSP STFT analyze failed";
+
+            if (!run_generic_kernel(rpmsg_fd_,
+                                    sequence,
+                                    EDGEAI_DSP_KERNEL_UTILS,
+                                    input_address,
+                                    buffer_size,
+                                    output_address,
+                                    buffer_size,
+                                    &params,
+                                    sizeof(params),
+                                    remote_status,
+                                    error)) {
+                result.error_message = "DSP layout conversion failed: " + error;
+                return result;
+            }
+
+            result.success = true;
+            result.input_size = input_frame;
+            result.output_size = input_frame;
+
+        } else {
+            result.error_message = "Unknown message type: " + message_type;
             return result;
         }
-
-        result.success = true;
-        result.input_size  = resp.param3;   /* input_frame  */
-        result.output_size = resp.param4;   /* output_frame */
-
-    } else if (message_type == "C7X_MSG_ISTFT_SYNTHESIZE") {
-        struct dsp_msg req = {};
-        req.hdr.type   = C7X_MSG_ISTFT_SYNTHESIZE;
-        req.hdr.seq    = sequence_number_++;
-        req.hdr.len    = sizeof(struct dsp_msg);
-        req.hdr.status = 0;
-
-        req.param0 = parameter_value(parameters, "selected_model", 0);     /* selected_model */
-        req.param1 = parameter_value(parameters, "input_buffer",  0, 16);  /* input_buffer   */
-        req.param2 = parameter_value(parameters, "output_buffer", 0, 16);  /* output_buffer  */
-        req.param3 = parameter_value(parameters, "input_frame",   0);      /* input_frame    */
-        req.param4 = parameter_value(parameters, "output_frame",  0);      /* output_frame   */
-#ifdef DEBUG
-        std::cout << "[GenericClient] ISTFT_SYNTHESIZE - Sending to firmware:" << std::endl;
-        std::cout << "[GenericClient]   selected_model=" << req.param0 << std::endl;
-        std::cout << "[GenericClient]   input_buffer=0x"  << std::hex << req.param1 << std::endl;
-        std::cout << "[GenericClient]   output_buffer=0x" << std::hex << req.param2 << std::endl;
-        std::cout << "[GenericClient]   input_frame="  << std::dec << req.param3 << " frames" << std::endl;
-        std::cout << "[GenericClient]   output_frame=" << std::dec << req.param4 << " frames" << std::endl;
-#endif
-        struct dsp_msg resp = {};
-        if (!exchange_message(rpmsg_fd_, req, resp)) {
-            result.error_message = "ISTFT synthesize message exchange failed";
-            return result;
-        }
-
-        if (resp.hdr.type != C7X_MSG_ISTFT_SYNTHESIZE_RESP || resp.hdr.seq != req.hdr.seq) {
-            result.error_message = "Invalid ISTFT synthesize response";
-            return result;
-        }
-#ifdef DEBUG
-        std::cout << "[GenericClient] ISTFT_SYNTHESIZE - Firmware responded:" << std::endl;
-        std::cout << "[GenericClient]   status="       << resp.hdr.status << std::endl;
-        std::cout << "[GenericClient]   input_frame="  << resp.param3 << " frames" << std::endl;
-        std::cout << "[GenericClient]   output_frame=" << resp.param4 << " frames" << std::endl;
-#endif
-        if (resp.hdr.status != C7X_STATUS_SUCCESS) {
-            result.error_message = "DSP ISTFT synthesize failed";
-            return result;
-        }
-
-        result.success = true;
-        result.input_size  = resp.param3;   /* input_frame  */
-        result.output_size = resp.param4;   /* output_frame */
-
-    } else if (message_type == "C7X_DEINTERLEAVE_MSG_ANALYZE") {
-        struct dsp_msg req = {};
-        req.hdr.type   = C7X_DEINTERLEAVE_MSG_ANALYZE;
-        req.hdr.seq    = sequence_number_++;
-        req.hdr.len    = sizeof(struct dsp_msg);
-        req.hdr.status = 0;
-
-        req.param0 = parameter_value(parameters, "input_buffer",  0, 16);   /* input_buffer   */
-        req.param1 = parameter_value(parameters, "output_buffer", 0, 16);   /* output_buffer  */
-        req.param2 = parameter_value(parameters, "input_frame",   0);       /* input_frame    */
-        req.param3 = parameter_value(parameters, "fft_size",      0);       /* fft_size       */
-        req.param4 = parameter_value(parameters, "flag",          0);       /* flag           */
-
-        struct dsp_msg resp = {};
-        if (!exchange_message(rpmsg_fd_, req, resp)) {
-            result.error_message = "Layout conversion message exchange failed";
-            return result;
-        }
-
-        if (resp.hdr.type != C7X_DEINTERLEAVE_MSG_ANALYZE_RESP || resp.hdr.seq != req.hdr.seq) {
-            result.error_message = "Invalid layout conversion response";
-            return result;
-        }
-
-        if (resp.hdr.status != C7X_STATUS_SUCCESS) {
-            result.error_message = "DSP deinterleave/interleave failed";
-            return result;
-        }
-
-        result.success = true;
-        result.input_size  = resp.param2;   /* input_frame */
-        result.output_size = resp.param2;   /* input_frame */
-
-    } else {
-        result.error_message = "Unknown message type: " + message_type;
-        return result;
-    }
     } catch (const std::exception& error) {
         result.error_message = "Invalid DSP stage parameter: " + std::string{error.what()};
         return result;
